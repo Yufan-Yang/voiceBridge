@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "../sidecars/funasr_sidecar.py": "_up_/sidecars/funasr_sidecar.py",
+      "bundled/": "bundled/"
+    }
+  }
+}

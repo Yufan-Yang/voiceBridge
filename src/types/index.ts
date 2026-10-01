@@ -1,0 +1,34 @@
+// Single entry point for the shared types generated from Rust (ts-rs).
+// Regenerate with `pnpm gen:types`; do not hand-edit ./generated.
+export type { AdapterKind } from "./generated/AdapterKind";
+export type { AppError } from "./generated/AppError";
+export type { AppSnapshot } from "./generated/AppSnapshot";
+export type { AsrProviderKind } from "./generated/AsrProviderKind";
+export type { AudioSettings } from "./generated/AudioSettings";
+export type { BehaviorSettings } from "./generated/BehaviorSettings";
+export type { ErrorCode } from "./generated/ErrorCode";
+export type { InjectionOutcome } from "./generated/InjectionOutcome";
+export type { InjectionResult } from "./generated/InjectionResult";
+export type { ModelSettings } from "./generated/ModelSettings";
+export type { OutputKind } from "./generated/OutputKind";
+export type { OverlaySettings } from "./generated/OverlaySettings";
+export type { PermissionKind } from "./generated/PermissionKind";
+export type { PermissionRequired } from "./generated/PermissionRequired";
+export type { PermissionStatus } from "./generated/PermissionStatus";
+export type { PermissionsSnapshot } from "./generated/PermissionsSnapshot";
+export type { Phase } from "./generated/Phase";
+export type { PrivacySettings } from "./generated/PrivacySettings";
+export type { PromptCompileResult } from "./generated/PromptCompileResult";
+export type { PromptProviderKind } from "./generated/PromptProviderKind";
+export type { ProviderHealth } from "./generated/ProviderHealth";
+export type { ProviderStatus } from "./generated/ProviderStatus";
+export type { ProvidersHealth } from "./generated/ProvidersHealth";
+export type { RebindSuggestion } from "./generated/RebindSuggestion";
+export type { Settings } from "./generated/Settings";
+export type { ShortcutSettings } from "./generated/ShortcutSettings";
+export type { TargetSlot } from "./generated/TargetSlot";
+export type { TargetStatus } from "./generated/TargetStatus";
+export type { TargetsSnapshot } from "./generated/TargetsSnapshot";
+export type { UtteranceResult } from "./generated/UtteranceResult";
+export type { UtteranceStatus } from "./generated/UtteranceStatus";
+export type { WindowInfo } from "./generated/WindowInfo";

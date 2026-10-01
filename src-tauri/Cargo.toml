@@ -1,0 +1,40 @@
+[package]
+name = "voicebridge"
+version = "0.1.0"
+description = "Local push-to-talk voice input for coding windows"
+edition = "2021"
+
+[lib]
+name = "voicebridge_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "time", "process", "io-util", "rt", "rt-multi-thread", "macros", "net", "signal"] }
+tokio-util = "0.7"
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+cpal = "0.15"
+hound = "3"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+jsonschema = { version = "0.30", default-features = false }
+ts-rs = "10"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = "s"
+strip = true
