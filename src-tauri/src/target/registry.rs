@@ -20,6 +20,8 @@ pub struct TargetRegistry {
     wm: Arc<dyn WindowManager>,
     store: Arc<dyn ConfigStore>,
     inner: Mutex<Inner>,
+    /// Target ids in the order they were last spoken to (oldest first).
+    recent: Mutex<Vec<String>>,
 }
 
 fn not_found() -> AppError {
@@ -32,6 +34,7 @@ impl TargetRegistry {
             wm,
             store,
             inner: Mutex::new(Inner::default()),
+            recent: Mutex::new(Vec::new()),
         }
     }
 
@@ -352,6 +355,75 @@ impl TargetRegistry {
     }
 }
 
+impl TargetRegistry {
+    /// Makes the current foreground window the selected target, so the next
+    /// utterance goes to wherever the user is typing.
+    ///
+    /// - A window that is already a target is simply selected (its alias,
+    ///   project and output settings are kept).
+    /// - A new window takes a free slot; when all nine are used it replaces
+    ///   the target that was spoken to longest ago.
+    /// - When the foreground window is VoiceBridge itself, or there is none,
+    ///   nothing changes and the previous target keeps being used.
+    ///
+    /// Returns the target that is now selected because of this call.
+    pub fn track_foreground(
+        &self,
+        default_output: OutputKind,
+        auto_submit: bool,
+    ) -> Option<TargetSlot> {
+        let window = self.wm.foreground_window().ok().flatten()?;
+        if window.process_id == std::process::id() {
+            return None;
+        }
+        let existing = self
+            .list()
+            .into_iter()
+            .find(|t| matcher::identity_matches(t, &window));
+        let target = match existing {
+            Some(t) => {
+                self.select(&t.id).ok()?;
+                // Keep the title hint fresh; it is only a hint.
+                self.update(&t.id, |t| {
+                    t.title_hint = window.title.clone();
+                    t.status = TargetStatus::Online;
+                })
+                .ok()?
+            }
+            None => {
+                let slot = self.slot_for_new_target();
+                let t = self
+                    .bind_window(&window, slot, default_output, auto_submit)
+                    .ok()?;
+                self.select(&t.id).ok()?;
+                t
+            }
+        };
+        let mut recent = self.recent.lock().unwrap();
+        recent.retain(|id| id != &target.id);
+        recent.push(target.id.clone());
+        Some(target)
+    }
+
+    /// First free slot, otherwise the slot of the least recently used target.
+    fn slot_for_new_target(&self) -> u8 {
+        let targets = self.list();
+        if let Some(free) = (1..=SLOT_COUNT as u8).find(|s| !targets.iter().any(|t| t.slot == *s)) {
+            return free;
+        }
+        let recent = self.recent.lock().unwrap();
+        targets
+            .iter()
+            .min_by_key(|t| {
+                recent
+                    .iter()
+                    .position(|id| id == &t.id)
+                    .map_or(0, |i| i + 1)
+            })
+            .map_or(1, |t| t.slot)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,5 +549,72 @@ mod tests {
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].status, TargetStatus::Online);
         assert_eq!(list[1].status, TargetStatus::Offline);
+    }
+
+    #[test]
+    fn tracking_follows_the_foreground_window() {
+        let (desk, reg, _s) = setup();
+        // Nothing in front: nothing is tracked.
+        assert!(reg.track_foreground(OutputKind::Prompt, false).is_none());
+        assert!(reg.list().is_empty());
+
+        desk.set_foreground("2");
+        let codex = reg.track_foreground(OutputKind::Prompt, false).unwrap();
+        assert_eq!(codex.platform_window_id, "2");
+        assert_eq!(reg.selected_id(), Some(codex.id.clone()));
+        assert!(!codex.auto_submit);
+
+        // Speaking in another window switches to it and keeps the first one.
+        desk.set_foreground("3");
+        let cursor = reg.track_foreground(OutputKind::Prompt, false).unwrap();
+        assert_eq!(reg.selected_id(), Some(cursor.id.clone()));
+        assert_eq!(reg.list().len(), 2);
+
+        // Returning to a known window reuses its target and its settings.
+        reg.rename(&codex.id, "Web").unwrap();
+        desk.set_foreground("2");
+        let again = reg.track_foreground(OutputKind::Raw, true).unwrap();
+        assert_eq!(again.id, codex.id);
+        assert_eq!(again.alias, "Web");
+        assert_eq!(again.preferred_output, OutputKind::Prompt);
+        assert_eq!(reg.list().len(), 2);
+    }
+
+    #[test]
+    fn tracking_ignores_own_windows_and_recycles_the_oldest_slot() {
+        let (desk, reg, _s) = setup();
+        desk.add_window(MockDesktop::window(
+            "own",
+            std::process::id(),
+            "/Apps/VoiceBridge",
+            "Settings",
+        ));
+        desk.set_foreground("1");
+        let first = reg.track_foreground(OutputKind::Prompt, false).unwrap();
+        desk.set_foreground("own");
+        assert!(reg.track_foreground(OutputKind::Prompt, false).is_none());
+        assert_eq!(
+            reg.selected_id(),
+            Some(first.id.clone()),
+            "previous target keeps being used"
+        );
+
+        // Fill all nine slots, then speak in a tenth window.
+        for i in 0..8 {
+            let id = format!("w{i}");
+            desk.add_window(MockDesktop::window(&id, 100 + i, "/Apps/Term", &id));
+            desk.set_foreground(&id);
+            reg.track_foreground(OutputKind::Prompt, false).unwrap();
+        }
+        assert_eq!(reg.list().len(), 9);
+        desk.add_window(MockDesktop::window("tenth", 500, "/Apps/Term", "tenth"));
+        desk.set_foreground("tenth");
+        let tenth = reg.track_foreground(OutputKind::Prompt, false).unwrap();
+        assert_eq!(reg.list().len(), 9);
+        assert_eq!(
+            tenth.slot, first.slot,
+            "the least recently used target is replaced"
+        );
+        assert!(reg.get(&first.id).is_none());
     }
 }

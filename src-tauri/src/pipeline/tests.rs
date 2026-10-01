@@ -865,3 +865,75 @@ async fn utterance_without_target_is_kept_but_not_injected() {
     assert_eq!(h.p.last_result().unwrap().frozen_target_id, "");
     assert!(h.injector.calls.lock().unwrap().is_empty());
 }
+
+// ------------------------------------------------------------ follow focus
+
+#[tokio::test]
+async fn words_go_to_the_window_in_focus_when_speaking_starts() {
+    let h = harness();
+    // Target A is selected, but the user is typing in window 2 (target B).
+    h.desk.set_foreground("2");
+    h.asr.push("first", None);
+    speak(&h).await;
+    assert_eq!(h.p.last_result().unwrap().frozen_target_id, h.target_b.id);
+    assert_eq!(h.injector.calls.lock().unwrap()[0].0, h.target_b.id);
+
+    // A window that was never pinned is picked up automatically.
+    h.desk
+        .add_window(MockDesktop::window("77", 70, "/Apps/Terminal", "zsh"));
+    h.desk.set_foreground("77");
+    h.asr.push("second", None);
+    speak(&h).await;
+    let terminal = h
+        .registry
+        .list()
+        .into_iter()
+        .find(|t| t.platform_window_id == "77")
+        .unwrap();
+    assert_eq!(h.injector.calls.lock().unwrap()[1].0, terminal.id);
+    assert!(
+        !h.injector.calls.lock().unwrap()[1].2,
+        "Enter stays off for auto-tracked windows"
+    );
+}
+
+#[tokio::test]
+async fn moving_focus_while_processing_does_not_move_the_utterance() {
+    let h = harness();
+    h.desk.set_foreground("2");
+    let asr_gate = gate();
+    h.asr.push("stay with window two", Some(asr_gate.clone()));
+    h.p.ptt_press().unwrap();
+    let job = spawn_release(&h);
+    wait_phase(&h.p, Phase::Transcribing).await;
+
+    // The user clicks into another window while the models are working.
+    h.desk.set_foreground("3");
+    asr_gate.add_permits(1);
+    job.await.unwrap();
+    assert_eq!(h.injector.calls.lock().unwrap()[0].0, h.target_b.id);
+
+    // The target only changes when a new utterance starts in the other window.
+    h.asr.push("now window three", None);
+    speak(&h).await;
+    let third = h
+        .registry
+        .list()
+        .into_iter()
+        .find(|t| t.platform_window_id == "3")
+        .unwrap();
+    assert_eq!(h.injector.calls.lock().unwrap()[1].0, third.id);
+}
+
+#[tokio::test]
+async fn follow_focus_can_be_turned_off() {
+    let h = harness();
+    h.settings.write().unwrap().behavior.follow_focus = false;
+    h.desk.set_foreground("2");
+    speak(&h).await;
+    assert_eq!(
+        h.injector.calls.lock().unwrap()[0].0,
+        h.target_a.id,
+        "manual selection is used"
+    );
+}

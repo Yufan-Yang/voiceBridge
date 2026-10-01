@@ -158,7 +158,7 @@ export function Overlay() {
           <div className="chips" data-tauri-drag-region>
             {targets.length === 0 ? (
               <span className="hint" data-tauri-drag-region>
-                No window pinned
+                Speak into any window
               </span>
             ) : (
               targets.map((t) => (

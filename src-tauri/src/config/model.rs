@@ -90,6 +90,9 @@ pub struct BehaviorSettings {
     pub save_history: bool,
     pub completion_notice_ms: u32,
     pub wheel_cycles_targets: bool,
+    /// Send each utterance to the window that has focus when Push-to-Talk
+    /// is pressed. When off, only the manually selected target is used.
+    pub follow_focus: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]

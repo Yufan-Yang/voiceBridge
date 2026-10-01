@@ -5,13 +5,13 @@
 #   scripts/live-tests.sh models    llama.cpp, whisper.cpp and Fun-ASR providers
 #   scripts/live-tests.sh desktop   microphone capture + injection into TextEdit
 #   scripts/live-tests.sh overlay   overlay does not take focus, can be dragged
-#   scripts/live-tests.sh e2e       shortcut pin -> push-to-talk -> paste, in the app
+#   scripts/live-tests.sh e2e       push-to-talk in a window -> switch away -> paste back, in the app
 #   scripts/live-tests.sh all
 #
 # desktop / overlay / e2e need Accessibility (and Microphone) permission for
 # the terminal, take over the keyboard and mouse for a few seconds, and close
 # TextEdit when they finish. e2e uses the providers configured in the app's
-# settings and replaces the target pinned to slot 1.
+# settings.
 #
 # Model locations default to ~/.local/share/voicebridge; override with VB_HOME
 # or the individual VB_* variables.

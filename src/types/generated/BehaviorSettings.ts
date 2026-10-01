@@ -9,4 +9,9 @@ default_output: OutputKind, auto_inject: boolean,
 /**
  * Default `auto_submit` for newly bound targets. Always defaults to false.
  */
-auto_submit: boolean, save_history: boolean, completion_notice_ms: number, wheel_cycles_targets: boolean, };
+auto_submit: boolean, save_history: boolean, completion_notice_ms: number, wheel_cycles_targets: boolean, 
+/**
+ * Send each utterance to the window that has focus when Push-to-Talk
+ * is pressed. When off, only the manually selected target is used.
+ */
+follow_focus: boolean, };

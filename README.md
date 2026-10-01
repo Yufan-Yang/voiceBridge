@@ -14,7 +14,7 @@ Hold a global shortcut, speak, and VoiceBridge transcribes locally, turns the sp
 | Fun-ASR sidecar | Verified live with `Fun-ASR-Nano-2512` on CPU |
 | macOS window pinning, activation, paste, clipboard restore | Verified live against a real TextEdit window |
 | Overlay does not take focus; dragging | Verified live with simulated clicks and drags |
-| Whole flow inside the app | Verified live: shortcut pin → Push-to-Talk → Fun-ASR → llama.cpp → paste, with audio replayed from a WAV file |
+| Whole flow inside the app | Verified live: Push-to-Talk in a window → switch to another app → whisper.cpp → llama.cpp → paste back into the first window, with audio replayed from a WAV file |
 | Microphone capture | Capture path verified through a virtual input device; **not verified with a physical microphone** (the development machine has none) |
 | Windows, Linux | Interfaces only; every platform call returns `UNSUPPORTED` |
 
@@ -62,23 +62,28 @@ These run the real runtimes, models and desktop. They are not part of the normal
 scripts/live-tests.sh models    # llama.cpp, whisper.cpp, Fun-ASR
 scripts/live-tests.sh desktop   # audio capture + injection into TextEdit
 scripts/live-tests.sh overlay   # overlay keeps focus in the other app; dragging
-scripts/live-tests.sh e2e       # shortcut pin → Push-to-Talk → paste, in the app
+scripts/live-tests.sh e2e       # Push-to-Talk in a window → switch away → paste back, in the app
 scripts/live-tests.sh all
 ```
 
 - Runtimes and models are looked up under `~/.local/share/voicebridge` (override with `VB_HOME` or the `VB_*` variables listed in the script).
 - `desktop`, `overlay` and `e2e` need Accessibility permission for your terminal, drive the keyboard and mouse for a few seconds, and close TextEdit when done.
-- `e2e` uses the providers configured in the app's settings, replaces whatever is pinned to slot 1, and replays `VOICEBRIDGE_DEV_WAV` instead of the microphone (debug builds only).
+- `e2e` uses the providers configured in the app's settings and replays `VOICEBRIDGE_DEV_WAV` instead of the microphone (debug builds only).
 
 ## Using it
 
 1. Launch VoiceBridge. A small bar appears at the top of the screen; drag it anywhere (the position is remembered).
-2. Focus a coding window and press `Ctrl+Option+Shift+1` to pin it to slot 1 (slots 1–9). Or open Settings (⚙) › Targets and pin from the window list.
-3. Select a target by clicking its chip or with `Ctrl+Option+1…9`.
-4. Hold `Ctrl+Option+Space`, speak, release.
-5. The overlay shows Listening → Transcribing → Compiling prompt → Ready, then pastes the compiled prompt into the target. Click ▾ to see the raw transcription, normalized transcription and compiled prompt, each with Copy and Inject.
+2. Click into the window you want to talk to (your editor, terminal, chat panel).
+3. Hold `Ctrl+Option+Space`, speak, release.
+4. The overlay shows Listening → Transcribing → Compiling prompt → Ready, then pastes the compiled prompt into that window. Click ▾ to see the raw transcription, normalized transcription and compiled prompt, each with Copy and Inject.
 
-With the default Mock providers the transcription is a canned sample sentence, so the whole flow can be tried without any model.
+**Where the words go.** The target is the window that has focus at the moment you press Push-to-Talk. It is fixed for that utterance: if you click into another window while the models are working, the text still goes back to the first one. The target only changes when you start speaking in a different window. Windows you have spoken into appear as chips in the overlay (up to nine; the least recently used is replaced), and each keeps its own project directory, output mode and Enter-after-paste setting.
+
+If VoiceBridge's own settings window is in front when you press the shortcut, the previous target is used.
+
+To route by hand instead, turn off Settings › Advanced settings › Behavior › "Send to the window I am in when I start speaking". Then pin windows with `Ctrl+Option+Shift+1…9` (or from the Targets tab) and select one by clicking its chip or with `Ctrl+Option+1…9`.
+
+With the Mock providers the transcription is a canned sample sentence, so the whole flow can be tried without any model.
 
 ### Default shortcuts
 
@@ -218,7 +223,7 @@ Rust structs are the single source of truth for shared types; `src/types/generat
 
 ### Rules the pipeline enforces
 
-- **Frozen target**: the selected target is captured when Push-to-Talk is pressed. Transcription, compilation and injection all use it; changing the selection meanwhile only affects the next utterance.
+- **Frozen target**: the window in focus (or, with focus-following off, the selected target) is captured when Push-to-Talk is pressed. Transcription, compilation and injection all use it; changing the selection meanwhile only affects the next utterance.
 - **One recording at a time**: repeated presses while recording are ignored.
 - **Stale results are dropped**: each utterance has its own cancellation token and id; a result for anything but the current utterance is ignored.
 - **Raw transcript is immutable**: the prompt compiler's result type has no raw-transcript field.

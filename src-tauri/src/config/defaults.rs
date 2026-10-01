@@ -76,6 +76,7 @@ impl Default for BehaviorSettings {
             save_history: false,
             completion_notice_ms: 4000,
             wheel_cycles_targets: true,
+            follow_focus: true,
         }
     }
 }

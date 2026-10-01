@@ -360,8 +360,7 @@ export function SettingsPanel() {
   const hasBuiltIn = bundled.length > 0;
   const builtInPlaceholder = hasBuiltIn ? "Built in — leave empty" : "Choose a file…";
   const boundIds = new Set(snapshot.targets.map((t) => t.platform_window_id));
-  const unpinnedWindows = windows.filter((w) => !boundIds.has(w.platform_window_id));
-  const nextSlot = SLOTS.find((slot) => !snapshot.targets.some((t) => t.slot === slot));
+  const currentTarget = snapshot.targets.find((t) => t.id === snapshot.selected_target_id) ?? null;
   const missingPermissions = (["microphone", "accessibility"] as const).filter(
     (kind) => permissions !== null && permissions[kind] !== "granted",
   );
@@ -406,55 +405,18 @@ export function SettingsPanel() {
           ) : null}
 
           <section>
-            <h2>Where should your words go?</h2>
-            {snapshot.targets.map((t) => (
-              <div key={t.id} className="window-row">
-                <span className="target-slot">{slotGlyph(t.slot)}</span>
+            <h2>Where your words go</h2>
+            <p className="note">
+              Into the window you are typing in when you start speaking. If you click somewhere else while VoiceBridge is
+              working, the text still goes to that first window. Nothing to set up.
+            </p>
+            {currentTarget ? (
+              <div className="window-row">
                 <span className="window-name">
-                  <strong>{t.alias}</strong> {t.title_hint}
+                  Last used: <strong>{currentTarget.alias}</strong> {currentTarget.title_hint}
                 </span>
-                {t.status === "offline" ? <span className="badge badge-unavailable">closed</span> : null}
-                {t.id === snapshot.selected_target_id ? (
-                  <span className="badge badge-ready">current</span>
-                ) : (
-                  <button type="button" onClick={() => targetAction(() => api.selectTarget(t.id))}>
-                    Use
-                  </button>
-                )}
-                <button type="button" onClick={() => targetAction(() => api.unbindTarget(t.id))}>
-                  Remove
-                </button>
               </div>
-            ))}
-            {unpinnedWindows.length > 0 ? (
-              <div className="row">
-                <select
-                  className="grow"
-                  value=""
-                  disabled={nextSlot === undefined}
-                  onChange={(e) => {
-                    if (e.target.value && nextSlot !== undefined) {
-                      targetAction(() => api.bindWindowToSlot(e.target.value, nextSlot));
-                    }
-                  }}
-                >
-                  <option value="">
-                    {nextSlot === undefined ? "All 9 places are used" : "Add a window…"}
-                  </option>
-                  {unpinnedWindows.map((w) => (
-                    <option key={w.platform_window_id} value={w.platform_window_id}>
-                      {w.app_name}
-                      {w.title ? ` — ${w.title}` : ""}
-                    </option>
-                  ))}
-                </select>
-                <button type="button" onClick={refreshWindows}>
-                  Refresh
-                </button>
-              </div>
-            ) : (
-              <p className="note">Open the app you code in, then press Refresh.</p>
-            )}
+            ) : null}
           </section>
 
           <section>
@@ -515,6 +477,10 @@ export function SettingsPanel() {
         {tab === "targets" ? (
           <>
             <h2>Pinned targets</h2>
+            <p className="note">
+              Windows you speak into are added here automatically. Pinning by hand is only needed when “Send to the
+              window I am in” is turned off (Behavior).
+            </p>
             <p className="note">
               Up to nine top-level windows. Tabs or panels inside one window cannot be told apart. A target is never
               rebound automatically.
@@ -807,6 +773,12 @@ export function SettingsPanel() {
                 ))}
               </select>
             </Field>
+            <Toggle
+              label="Send to the window I am in when I start speaking"
+              hint="On: no pinning needed. Off: text always goes to the target you selected by hand."
+              checked={behavior.follow_focus}
+              onChange={(v) => patch("behavior", { follow_focus: v })}
+            />
             <Toggle
               label="Automatically inject after processing"
               hint="Pastes into the target frozen when recording began. Never happens when the prompt failed or needs confirmation."

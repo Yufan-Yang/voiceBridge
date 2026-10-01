@@ -1,7 +1,7 @@
 // End-to-end check of the running VoiceBridge app on a real desktop:
-// pin the frontmost window with the global shortcut, switch away, hold
-// Push-to-Talk, and wait for the compiled prompt to be pasted into the
-// pinned window. Uses the default shortcuts.
+// hold Push-to-Talk in the frontmost window, switch to another app while the
+// models work, and wait for the compiled prompt to be pasted back into the
+// window where speaking started. Uses the default shortcut.
 // Usage: swift scripts/e2e_check.swift <pid of the window's app> <timeout seconds>
 import ApplicationServices
 import Foundation
@@ -45,28 +45,24 @@ guard CommandLine.arguments.count == 3, let target = pid_t(CommandLine.arguments
 guard frontPid() == target else { fail("the window to pin is not frontmost") }
 let initial = focusedText(target)
 
-// Ctrl+Option+Shift+1: pin the foreground window to slot 1.
-let pin: CGEventFlags = [.maskControl, .maskAlternate, .maskShift]
-key(18, pin, down: true)
-key(18, pin, down: false)
-sleep(2)
-guard focusedText(target) == initial else { fail("the pin shortcut leaked a keystroke into the window") }
+// Ctrl+Option+Space: hold Push-to-Talk while the target window has focus.
+// No pinning: the window in focus when speaking starts is the target.
+let ptt: CGEventFlags = [.maskControl, .maskAlternate]
+key(49, ptt, down: true)
+usleep(700_000)
+key(49, ptt, down: false)
+guard focusedText(target) == initial else { fail("the shortcut leaked a keystroke into the window") }
 
-// Put Finder in front so the injection has to activate the target itself.
+// Move focus away while the models work: the text must still come back here.
 let finder = Process()
 finder.executableURL = URL(fileURLWithPath: "/usr/bin/open")
 finder.arguments = ["-a", "Finder"]
 try? finder.run()
 finder.waitUntilExit()
 sleep(1)
+guard focusedText(target) == initial else { fail("the paste happened before focus could be moved; use a longer sample") }
 guard frontPid() != target else { fail("could not move focus away from the target") }
-
-// Ctrl+Option+Space: hold Push-to-Talk for a moment, then release.
-let ptt: CGEventFlags = [.maskControl, .maskAlternate]
-key(49, ptt, down: true)
-usleep(700_000)
-key(49, ptt, down: false)
-print("push-to-talk released; waiting for the prompt to be pasted…")
+print("push-to-talk released and focus moved to Finder; waiting for the paste…")
 
 let deadline = Date().addingTimeInterval(timeout)
 var text = initial

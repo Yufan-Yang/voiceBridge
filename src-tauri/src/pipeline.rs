@@ -323,6 +323,18 @@ impl Pipeline {
     /// rapid presses), so there is never more than one recording task.
     pub fn ptt_press(self: &Arc<Self>) -> Result<Option<String>> {
         let id = uuid::Uuid::new_v4().to_string();
+        if matches!(self.phase(), Phase::Listening | Phase::Injecting) {
+            // Key repeat or a busy injector: do not retarget anything.
+        } else {
+            let behavior = self.settings.read().unwrap().behavior.clone();
+            if behavior.follow_focus {
+                // The utterance goes to the window the user is in right now.
+                // If that is VoiceBridge itself (or nothing), the previous
+                // target keeps being used.
+                self.registry
+                    .track_foreground(behavior.default_output, behavior.auto_submit);
+            }
+        }
         {
             let mut g = self.inner.lock().unwrap();
             if g.machine.phase == Phase::Listening {
