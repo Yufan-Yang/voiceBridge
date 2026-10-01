@@ -408,7 +408,8 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             };
             let registry = state.registry.clone();
-            let changed = tokio::task::spawn_blocking(move || registry.refresh_status())
+            let prune = state.settings.read().unwrap().behavior.follow_focus;
+            let changed = tokio::task::spawn_blocking(move || registry.refresh_status(prune))
                 .await
                 .unwrap_or(false);
             if changed {

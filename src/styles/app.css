@@ -210,6 +210,23 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+.chip-group {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.chip-group .chip {
+  border-radius: 4px 0 0 4px;
+}
+
+.chip-remove {
+  border-color: var(--orange);
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+  color: var(--orange);
+  padding: 2px 5px;
+}
+
 .chip-arrow,
 .chip-flag {
   color: var(--tone, var(--orange));

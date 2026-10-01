@@ -12,6 +12,11 @@ export type TargetSlot = { id: string, slot: number, alias: string, platform_win
  */
 auto_submit: boolean, status: TargetStatus, 
 /**
+ * Created by follow-focus and never customised. Such a target is
+ * dropped automatically once its window is closed.
+ */
+auto_tracked: boolean, 
+/**
  * Vocabulary terms added by the user for this target.
  */
 manual_terms: Array<string>, };

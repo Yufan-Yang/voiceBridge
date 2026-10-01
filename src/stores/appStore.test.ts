@@ -15,6 +15,7 @@ const target = (id: string, slot: number): TargetSlot => ({
   adapter: "generic_clipboard",
   preferred_output: "prompt",
   auto_submit: false,
+  auto_tracked: false,
   status: "online",
   manual_terms: [],
 });

@@ -46,9 +46,17 @@ pub struct TargetSlot {
     pub auto_submit: bool,
     #[serde(default)]
     pub status: TargetStatus,
+    /// Created by follow-focus and never customised. Such a target is
+    /// dropped automatically once its window is closed.
+    #[serde(default = "default_auto_tracked")]
+    pub auto_tracked: bool,
     /// Vocabulary terms added by the user for this target.
     #[serde(default)]
     pub manual_terms: Vec<String>,
+}
+
+fn default_auto_tracked() -> bool {
+    true
 }
 
 impl TargetSlot {
@@ -74,6 +82,7 @@ impl TargetSlot {
             preferred_output,
             auto_submit: false,
             status: TargetStatus::Online,
+            auto_tracked: false,
             manual_terms: Vec::new(),
         }
     }

@@ -32,7 +32,11 @@ Rules:
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct TargetContext {
+    /// Kept for routing checks only and never sent to the model: it used to
+    /// work the app name into the prompt ("in the TextEdit application").
+    #[serde(skip)]
     pub app_name: String,
+    #[serde(skip)]
     pub target_alias: String,
     pub project_root: Option<String>,
     pub active_file: Option<String>,
@@ -274,7 +278,9 @@ mod tests {
             diagnostics: vec![],
         };
         let v = serde_json::to_value(&input).unwrap();
-        assert_eq!(v["target"]["target_alias"], "Backend");
+        assert!(v["target"].get("target_alias").is_none());
+        assert!(v["target"].get("app_name").is_none());
+        assert!(!v.to_string().contains("Claude Code"));
         assert!(v["selected_code"].is_null());
         assert_eq!(v["project_terms"][0], "useUserQuery");
     }

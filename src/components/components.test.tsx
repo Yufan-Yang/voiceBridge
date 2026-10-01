@@ -19,6 +19,7 @@ const target: TargetSlot = {
   adapter: "generic_clipboard",
   preferred_output: "prompt",
   auto_submit: false,
+  auto_tracked: false,
   status: "online",
   manual_terms: [],
 };
@@ -69,6 +70,12 @@ describe("TargetChip", () => {
     expect(renderToStaticMarkup(<TargetChip target={target} selected />)).toContain("chip selected");
     const offline = renderToStaticMarkup(<TargetChip target={{ ...target, status: "offline" }} selected={false} />);
     expect(offline).toContain("offline");
+    expect(offline).not.toContain("chip-remove");
+    const removable = renderToStaticMarkup(
+      <TargetChip target={{ ...target, status: "offline" }} selected={false} onRemove={() => {}} />,
+    );
+    expect(removable).toContain("chip-remove");
+    expect(renderToStaticMarkup(<TargetChip target={target} selected onRemove={() => {}} />)).not.toContain("chip-remove");
     const receiving = renderToStaticMarkup(<TargetChip target={target} selected receiving />);
     expect(receiving).toContain("→");
     expect(receiving).toContain("②");

@@ -117,7 +117,7 @@ export function Overlay() {
           : []),
         {
           id: "unbind",
-          text: "Unbind",
+          text: target.status === "offline" ? "Remove (window closed)" : "Unbind",
           action: () => {
             void run(() => api.unbindTarget(target.id));
           },
@@ -178,6 +178,7 @@ export function Overlay() {
                   onSelect={(target) => void run(() => api.selectTarget(target.id))}
                   onActivate={(target) => void run(() => api.activateTarget(target.id))}
                   onContextMenu={(target) => void openMenu(target)}
+                  onRemove={(target) => void run(() => api.unbindTarget(target.id))}
                 />
               ))
             )}

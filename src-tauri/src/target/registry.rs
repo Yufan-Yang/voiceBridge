@@ -56,7 +56,7 @@ impl TargetRegistry {
                 g.targets = targets;
             }
         }
-        reg.refresh_status();
+        reg.refresh_status(false);
         reg
     }
 
@@ -188,7 +188,10 @@ impl TargetRegistry {
         if alias.is_empty() {
             return Err(AppError::new(ErrorCode::InvalidInput).with_details("empty alias"));
         }
-        self.update(id, |t| t.alias = alias)
+        self.update(id, |t| {
+            t.alias = alias;
+            t.auto_tracked = false;
+        })
     }
 
     pub fn set_project_root(&self, id: &str, root: Option<String>) -> Result<TargetSlot> {
@@ -201,15 +204,22 @@ impl TargetRegistry {
         self.update(id, |t| {
             t.project_root = root;
             t.project_name = name;
+            t.auto_tracked = false;
         })
     }
 
     pub fn set_output(&self, id: &str, output: OutputKind) -> Result<TargetSlot> {
-        self.update(id, |t| t.preferred_output = output)
+        self.update(id, |t| {
+            t.preferred_output = output;
+            t.auto_tracked = false;
+        })
     }
 
     pub fn set_auto_submit(&self, id: &str, auto_submit: bool) -> Result<TargetSlot> {
-        self.update(id, |t| t.auto_submit = auto_submit)
+        self.update(id, |t| {
+            t.auto_submit = auto_submit;
+            t.auto_tracked = false;
+        })
     }
 
     pub fn set_manual_terms(&self, id: &str, terms: Vec<String>) -> Result<TargetSlot> {
@@ -219,7 +229,10 @@ impl TargetRegistry {
             .filter(|t| !t.is_empty())
             .take(200)
             .collect();
-        self.update(id, |t| t.manual_terms = terms)
+        self.update(id, |t| {
+            t.manual_terms = terms;
+            t.auto_tracked = false;
+        })
     }
 
     pub fn select(&self, id: &str) -> Result<()> {
@@ -269,7 +282,38 @@ impl TargetRegistry {
 
     /// Re-checks which targets still exist. Returns true when anything changed.
     /// Offline targets get a rebind *suggestion*; nothing is rebound here.
-    pub fn refresh_status(&self) -> bool {
+    ///
+    /// With `prune_closed`, targets that follow-focus created and the user
+    /// never customised are removed once their window is gone, so closed
+    /// windows do not pile up in the overlay.
+    pub fn refresh_status(&self, prune_closed: bool) -> bool {
+        let pruned = prune_closed && self.prune_closed();
+        self.refresh_online() || pruned
+    }
+
+    fn prune_closed(&self) -> bool {
+        let gone: Vec<String> = self
+            .list()
+            .into_iter()
+            .filter(|t| t.auto_tracked)
+            .filter(|t| {
+                // A lookup error is not proof the window closed.
+                match self.wm.window_info(&t.platform_window_id) {
+                    Ok(Some(w)) => !matcher::identity_matches(t, &w),
+                    Ok(None) => true,
+                    Err(_) => false,
+                }
+            })
+            .map(|t| t.id)
+            .collect();
+        for id in &gone {
+            let _ = self.unbind(id);
+        }
+        self.recent.lock().unwrap().retain(|id| !gone.contains(id));
+        !gone.is_empty()
+    }
+
+    fn refresh_online(&self) -> bool {
         let targets = self.list();
         if targets.is_empty() {
             return false;
@@ -348,6 +392,7 @@ impl TargetRegistry {
         t.executable_or_bundle_id = window.executable_or_bundle_id.clone();
         t.title_hint = window.title.clone();
         t.status = TargetStatus::Online;
+        t.auto_tracked = false;
         let out = t.clone();
         g.suggestions.retain(|s| s.target_id != target_id);
         self.persist(&g.targets);
@@ -396,7 +441,7 @@ impl TargetRegistry {
                     .bind_window(&window, slot, default_output, auto_submit)
                     .ok()?;
                 self.select(&t.id).ok()?;
-                t
+                self.update(&t.id, |t| t.auto_tracked = true).ok()?
             }
         };
         let mut recent = self.recent.lock().unwrap();
@@ -521,7 +566,7 @@ mod tests {
         desk.remove_window("1");
         // A new window of the same app with the same title appears.
         desk.add_window(MockDesktop::window("99", 11, "/Apps/Claude", "backend"));
-        assert!(reg.refresh_status());
+        assert!(reg.refresh_status(false));
         let snap = reg.snapshot();
         assert_eq!(snap.targets[0].status, TargetStatus::Offline);
         assert_eq!(
@@ -616,5 +661,40 @@ mod tests {
             "the least recently used target is replaced"
         );
         assert!(reg.get(&first.id).is_none());
+    }
+
+    #[test]
+    fn closed_windows_are_dropped_unless_customised() {
+        let (desk, reg, store) = setup();
+        desk.set_foreground("1");
+        let plain = reg.track_foreground(OutputKind::Prompt, false).unwrap();
+        desk.set_foreground("2");
+        let kept = reg.track_foreground(OutputKind::Prompt, false).unwrap();
+        reg.rename(&kept.id, "Web").unwrap();
+        let pinned = bind(&reg, "3", 3);
+
+        assert!(!reg.refresh_status(true), "open windows stay");
+        desk.remove_window("1");
+        desk.remove_window("2");
+        desk.remove_window("3");
+
+        assert!(reg.refresh_status(false));
+        assert_eq!(reg.list().len(), 3, "pinned mode keeps closed windows");
+
+        assert!(reg.refresh_status(true));
+        assert!(reg.get(&plain.id).is_none());
+        assert!(reg.get(&kept.id).is_some(), "renamed target is kept");
+        assert!(reg.get(&pinned.id).is_some(), "pinned target is kept");
+        assert!(!store
+            .load(TARGETS_KEY)
+            .unwrap()
+            .unwrap()
+            .contains(&plain.id));
+
+        // A kept, closed target can still be removed by hand.
+        reg.unbind(&kept.id).unwrap();
+        reg.unbind(&pinned.id).unwrap();
+        assert!(reg.list().is_empty());
+        assert_eq!(reg.selected_id(), None);
     }
 }

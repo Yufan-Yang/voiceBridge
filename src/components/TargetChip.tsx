@@ -11,9 +11,11 @@ interface Props {
   onSelect?: (target: TargetSlot) => void;
   onActivate?: (target: TargetSlot) => void;
   onContextMenu?: (target: TargetSlot) => void;
+  /** Shown as a × on a target whose window is closed. */
+  onRemove?: (target: TargetSlot) => void;
 }
 
-export function TargetChip({ target, selected, receiving, hasSuggestion, onSelect, onActivate, onContextMenu }: Props) {
+export function TargetChip({ target, selected, receiving, hasSuggestion, onSelect, onActivate, onContextMenu, onRemove }: Props) {
   const offline = target.status === "offline";
   const classes = ["chip", selected ? "selected" : "", offline ? "offline" : "", receiving ? "receiving" : ""]
     .filter(Boolean)
@@ -25,7 +27,7 @@ export function TargetChip({ target, selected, receiving, hasSuggestion, onSelec
     e.preventDefault();
     onContextMenu?.(target);
   };
-  return (
+  const chip = (
     <button
       type="button"
       className={classes}
@@ -41,5 +43,21 @@ export function TargetChip({ target, selected, receiving, hasSuggestion, onSelec
       <span className="chip-label">{targetLabel(target)}</span>
       {offline ? <span className="chip-flag">{hasSuggestion ? "↻" : "!"}</span> : null}
     </button>
+  );
+  if (!offline || !onRemove) return chip;
+  return (
+    <span className="chip-group">
+      {chip}
+      <button
+        type="button"
+        className="chip-remove"
+        title={`Remove ${targetLabel(target)} (window closed)`}
+        aria-label={`Remove ${targetLabel(target)}`}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onRemove(target)}
+      >
+        ×
+      </button>
+    </span>
   );
 }
