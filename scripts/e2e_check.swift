@@ -47,10 +47,23 @@ let initial = focusedText(target)
 
 // Ctrl+Option+Space: hold Push-to-Talk while the target window has focus.
 // No pinning: the window in focus when speaking starts is the target.
+// VB_E2E_MODE=tap: press and release to start, wait, press and release to stop.
+// Otherwise hold for VB_E2E_HOLD_MS (default 700 ms).
 let ptt: CGEventFlags = [.maskControl, .maskAlternate]
-key(49, ptt, down: true)
-usleep(700_000)
-key(49, ptt, down: false)
+let env = ProcessInfo.processInfo.environment
+let holdMs = UInt32(env["VB_E2E_HOLD_MS"] ?? "") ?? 700
+if env["VB_E2E_MODE"] == "tap" {
+    key(49, ptt, down: true)
+    key(49, ptt, down: false)
+    usleep(holdMs * 1000)
+    guard focusedText(target) == initial else { fail("text was pasted before the second tap") }
+    key(49, ptt, down: true)
+    key(49, ptt, down: false)
+} else {
+    key(49, ptt, down: true)
+    usleep(holdMs * 1000)
+    key(49, ptt, down: false)
+}
 guard focusedText(target) == initial else { fail("the shortcut leaked a keystroke into the window") }
 
 // Move focus away while the models work: the text must still come back here.

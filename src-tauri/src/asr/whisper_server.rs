@@ -268,6 +268,10 @@ impl AsrProvider for WhisperServerProvider {
         Ok(health_from_state(PROVIDER, state))
     }
 
+    fn supports_interim(&self) -> bool {
+        true
+    }
+
     /// Loads the model and runs one tiny transcription so the GPU shaders
     /// are compiled before the user's first utterance.
     async fn start(&self) -> Result<()> {

@@ -184,6 +184,14 @@ pub struct PermissionsSnapshot {
     pub accessibility: PermissionStatus,
 }
 
+/// Words recognized so far while the user is still speaking.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct InterimTranscript {
+    pub utterance_id: String,
+    pub text: String,
+}
+
 /// Complete UI state. Emitted with every `state_changed` event.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]

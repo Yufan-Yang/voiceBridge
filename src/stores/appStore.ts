@@ -3,6 +3,7 @@ import type {
   AppError,
   AppSnapshot,
   InjectionOutcome,
+  InterimTranscript,
   ProvidersHealth,
   TargetsSnapshot,
   UtteranceResult,
@@ -28,6 +29,8 @@ export interface AppStore {
   snapshot: AppSnapshot;
   /** Microphone input level, 0..1. */
   level: number;
+  /** Words recognized so far while still speaking. */
+  interim: string;
   health: ProvidersHealth | null;
   lastInjection: InjectionOutcome | null;
   /** Error from a user action (command rejection), shown until dismissed. */
@@ -35,6 +38,7 @@ export interface AppStore {
 
   setSnapshot: (snapshot: AppSnapshot) => void;
   setLevel: (level: number) => void;
+  setInterim: (interim: InterimTranscript) => void;
   setTargets: (targets: TargetsSnapshot) => void;
   setHealth: (health: ProvidersHealth) => void;
   applyUtterance: (result: UtteranceResult) => void;
@@ -45,6 +49,7 @@ export interface AppStore {
 export const useAppStore = create<AppStore>((set) => ({
   snapshot: EMPTY_SNAPSHOT,
   level: 0,
+  interim: "",
   health: null,
   lastInjection: null,
   actionError: null,
@@ -53,10 +58,19 @@ export const useAppStore = create<AppStore>((set) => ({
     set((state) => ({
       snapshot,
       level: snapshot.phase === "LISTENING" ? state.level : 0,
+      // Interim text belongs to one recording: drop it when a new one starts
+      // and once the final result is in.
+      interim:
+        snapshot.utterance_id !== state.snapshot.utterance_id ||
+        !["LISTENING", "FINALIZING_AUDIO", "TRANSCRIBING"].includes(snapshot.phase)
+          ? ""
+          : state.interim,
       // A new utterance clears the previous action error.
       actionError: snapshot.phase === "LISTENING" ? null : state.actionError,
     })),
   setLevel: (level) => set({ level: Math.min(1, Math.max(0, level)) }),
+  setInterim: (interim) =>
+    set((state) => (state.snapshot.utterance_id === interim.utterance_id ? { interim: interim.text } : {})),
   setTargets: (targets) =>
     set((state) => ({
       snapshot: {

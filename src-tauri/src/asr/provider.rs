@@ -30,6 +30,12 @@ pub trait AsrProvider: Send + Sync {
         Ok(())
     }
 
+    /// True when a transcription is fast enough to run repeatedly while the
+    /// user is still speaking (live interim text).
+    fn supports_interim(&self) -> bool {
+        false
+    }
+
     async fn transcribe(
         &self,
         audio: AudioBuffer,

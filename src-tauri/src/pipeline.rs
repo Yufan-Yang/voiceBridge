@@ -4,6 +4,7 @@
 
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -11,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::asr::{AsrContext, AsrProvider};
 use crate::audio::{self, AudioBuffer, AudioSource, CaptureOptions};
-use crate::config::Settings;
+use crate::config::{Settings, TalkMode};
 use crate::error::{AppError, ErrorCode, Result};
 use crate::events::{AppEvent, EventSink};
 use crate::history::HistoryStore;
@@ -28,6 +29,28 @@ use crate::vocab::VocabStore;
 /// Upper bound on vocabulary terms handed to the models per utterance.
 const MAX_CONTEXT_TERMS: usize = 80;
 const ERROR_NOTICE_MIN_MS: u64 = 8000;
+
+/// How often interim text is refreshed while recording.
+const INTERIM_INTERVAL: Duration = Duration::from_millis(700);
+/// Input level (0..1, as reported to the UI) that counts as speech.
+const VOICE_LEVEL: f32 = 0.04;
+/// Auto-submit needs at least this many words.
+pub const MIN_WORDS_TO_SUBMIT: usize = 3;
+
+/// Counts words. Scripts written without spaces (Chinese, Japanese, Thai,
+/// Korean) are counted at roughly two characters per word.
+pub fn word_count(text: &str) -> usize {
+    let is_unspaced = |c: char| {
+        matches!(c as u32,
+            0x0E00..=0x0E7F | 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF)
+    };
+    let unspaced = text.chars().filter(|c| is_unspaced(*c)).count();
+    let spaced = text
+        .split(|c: char| c.is_whitespace() || is_unspaced(c))
+        .filter(|w| w.chars().any(|c| c.is_alphanumeric()))
+        .count();
+    spaced + unspaced.div_ceil(2)
+}
 
 #[derive(Clone)]
 pub struct Providers {
@@ -80,6 +103,9 @@ pub struct Pipeline {
     history: Arc<HistoryStore>,
     permissions: Arc<dyn PermissionManager>,
     data_dir: Option<PathBuf>,
+    /// When speech-level input was last heard (epoch ms); drives the
+    /// tap-mode silence stop.
+    last_voice_ms: Arc<AtomicU64>,
 }
 
 /// Runs `fut` until it finishes, the utterance is canceled, or `timeout`
@@ -121,6 +147,7 @@ impl Pipeline {
             history: deps.history,
             permissions: deps.permissions,
             data_dir: deps.data_dir,
+            last_voice_ms: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -372,16 +399,52 @@ impl Pipeline {
             return Err(e);
         }
         let events = self.events.clone();
+        let last_voice = self.last_voice_ms.clone();
+        last_voice.store(now_ms() as u64, Ordering::SeqCst);
         let started = self.audio.start(
             CaptureOptions {
                 device: settings.audio.input_device.clone(),
                 max_secs: settings.audio.max_recording_secs,
             },
-            Arc::new(move |level| events.emit(AppEvent::RecordingLevel(level))),
+            Arc::new(move |level| {
+                if level >= VOICE_LEVEL {
+                    last_voice.store(now_ms() as u64, Ordering::SeqCst);
+                }
+                events.emit(AppEvent::RecordingLevel(level))
+            }),
         );
         if let Err(e) = started {
             self.fail(&id, e.clone());
             return Err(e);
+        }
+
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            // Live text: transcribe what has been said so far, repeatedly.
+            let asr = self.providers().asr;
+            if settings.behavior.live_text && asr.supports_interim() {
+                handle.spawn(self.clone().interim_loop(id.clone(), asr, settings.clone()));
+            }
+            // Tap mode: stop by itself after a stretch without speech.
+            if settings.behavior.talk_mode == TalkMode::Tap {
+                let this = self.clone();
+                let utterance = id.clone();
+                let limit_ms = settings.behavior.silence_stop_secs as u64 * 1000;
+                handle.spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        if !this.is_listening(&utterance) {
+                            break;
+                        }
+                        let quiet_ms = (now_ms() as u64)
+                            .saturating_sub(this.last_voice_ms.load(Ordering::SeqCst));
+                        if quiet_ms >= limit_ms {
+                            logging::event(&utterance, "silence_stop", "");
+                            this.ptt_release().await;
+                            break;
+                        }
+                    }
+                });
+            }
         }
 
         // Enforce the maximum recording duration.
@@ -402,6 +465,64 @@ impl Pipeline {
             });
         }
         Ok(Some(id))
+    }
+
+    fn is_listening(&self, utterance_id: &str) -> bool {
+        let g = self.inner.lock().unwrap();
+        g.machine.phase == Phase::Listening
+            && g.machine.utterance_id.as_deref() == Some(utterance_id)
+    }
+
+    /// While the user is still speaking, transcribes the audio captured so
+    /// far and publishes it as interim text. Purely informational: the final
+    /// transcript always comes from the complete recording after release.
+    async fn interim_loop(
+        self: Arc<Self>,
+        utterance_id: String,
+        asr: Arc<dyn AsrProvider>,
+        settings: Settings,
+    ) {
+        let mut last = String::new();
+        let mut updates = 0u32;
+        loop {
+            tokio::time::sleep(INTERIM_INTERVAL).await;
+            if !self.is_listening(&utterance_id) {
+                break;
+            }
+            let Some(snapshot) = self.audio.snapshot() else {
+                break;
+            };
+            // Skips silence and clips too short to contain words.
+            let Ok(audio) = audio::prepare_for_asr(snapshot, true) else {
+                continue;
+            };
+            let context = AsrContext {
+                utterance_id: utterance_id.clone(),
+                hotwords: Vec::new(),
+                language: Some(settings.models.asr_language.clone())
+                    .filter(|l| !l.trim().is_empty()),
+            };
+            let result = asr
+                .transcribe(audio, context, CancellationToken::new())
+                .await;
+            if !self.is_listening(&utterance_id) {
+                break; // released meanwhile: the final pass takes over
+            }
+            if let Ok(t) = result {
+                let text = t.text.trim().to_string();
+                if !text.is_empty() && text != last {
+                    last = text.clone();
+                    updates += 1;
+                    self.events
+                        .emit(AppEvent::InterimTranscript(InterimTranscript {
+                            utterance_id: utterance_id.clone(),
+                            text,
+                        }));
+                }
+            }
+        }
+        // Count only: the words themselves are never logged.
+        logging::event(&utterance_id, "interim", &format!("updates={updates}"));
     }
 
     /// Push-to-Talk released: stops capture. Returns the job to process, or
@@ -866,7 +987,9 @@ impl Pipeline {
         let outcome = match prepared {
             Ok((target, text)) => {
                 let options = InjectionOptions {
-                    auto_submit: target.auto_submit,
+                    // Enter is only pressed for a real sentence, so a stray
+                    // word from an accidental press is never submitted.
+                    auto_submit: target.auto_submit && word_count(&text) >= MIN_WORDS_TO_SUBMIT,
                     ..Default::default()
                 };
                 self.injector.inject(&target, &text, options).await

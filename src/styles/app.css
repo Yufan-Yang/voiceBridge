@@ -635,3 +635,16 @@ button.link {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+.interim {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* Right-to-left clipping keeps the end of the sentence in view. */
+  direction: rtl;
+  text-align: left;
+  color: var(--muted);
+  font-style: italic;
+}

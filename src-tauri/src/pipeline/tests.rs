@@ -353,11 +353,11 @@ async fn target_output_preference_and_auto_submit_are_per_target() {
         .set_output(&h.target_a.id, OutputKind::Raw)
         .unwrap();
     h.registry.set_auto_submit(&h.target_a.id, true).unwrap();
-    h.asr.push("ship it", None);
+    h.asr.push("ship it please", None);
     speak(&h).await;
     assert_eq!(
         h.injector.calls.lock().unwrap().clone(),
-        vec![(h.target_a.id.clone(), "ship it".to_string(), true)]
+        vec![(h.target_a.id.clone(), "ship it please".to_string(), true)]
     );
 }
 
@@ -987,4 +987,212 @@ async fn result_records_audio_length_and_processing_times() {
         0,
         "skipped prompt step takes no time"
     );
+}
+
+// ------------------------------------------------- live text, tap, submit
+
+/// Audio source whose snapshot grows while "recording", like a microphone.
+#[derive(Default)]
+struct GrowingAudio {
+    inner: MockAudioSource,
+}
+
+impl AudioSource for GrowingAudio {
+    fn start(&self, options: CaptureOptions, on_level: audio::LevelCallback) -> Result<()> {
+        self.inner.start(options, on_level)
+    }
+    fn stop(&self) -> Result<AudioBuffer> {
+        self.inner.stop()
+    }
+    fn abort(&self) {
+        self.inner.abort()
+    }
+    fn list_devices(&self) -> Vec<String> {
+        self.inner.list_devices()
+    }
+    fn snapshot(&self) -> Option<AudioBuffer> {
+        self.inner.is_active().then(|| MockAudioSource::tone(1500))
+    }
+}
+
+/// ASR double that can produce interim text: returns "partial N" per call.
+#[derive(Default)]
+struct LiveAsr {
+    calls: AtomicU32,
+}
+
+#[async_trait]
+impl AsrProvider for LiveAsr {
+    async fn health_check(&self) -> Result<ProviderHealth> {
+        Ok(ProviderHealth::new("live", ProviderStatus::Ready, ""))
+    }
+    fn supports_interim(&self) -> bool {
+        true
+    }
+    async fn transcribe(
+        &self,
+        audio: AudioBuffer,
+        _c: AsrContext,
+        _t: CancellationToken,
+    ) -> Result<TranscriptResult> {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        // The final pass gets the full 800 ms recording; interim passes get the snapshot.
+        let text = if audio.duration_ms() <= 900 {
+            "final words spoken here".to_string()
+        } else {
+            format!("partial {n}")
+        };
+        Ok(TranscriptResult {
+            text,
+            duration_ms: audio.duration_ms(),
+        })
+    }
+}
+
+fn live_harness() -> (Harness, Arc<GrowingAudio>) {
+    let h = harness();
+    let audio = Arc::new(GrowingAudio::default());
+    let p = Pipeline::new(PipelineDeps {
+        providers: Providers {
+            asr: Arc::new(LiveAsr::default()),
+            compiler: h.compiler.clone(),
+        },
+        injector: h.injector.clone(),
+        audio: audio.clone(),
+        registry: h.registry.clone(),
+        vocab: Arc::new(VocabStore::default()),
+        events: h.sink.clone(),
+        settings: h.settings.clone(),
+        history: h.history.clone(),
+        permissions: Arc::new(h.desk.clone()),
+        data_dir: None,
+    });
+    (Harness { p, ..h }, audio)
+}
+
+fn interim_texts(h: &Harness) -> Vec<String> {
+    h.sink
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|e| match e {
+            AppEvent::InterimTranscript(t) => Some(t.text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn live_text_is_published_while_speaking_and_never_replaces_the_final_transcript() {
+    let (h, _audio) = live_harness();
+    h.p.ptt_press().unwrap();
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    let during = interim_texts(&h);
+    assert!(
+        during.len() >= 2,
+        "interim text should update while recording: {during:?}"
+    );
+    assert!(during.iter().all(|t| t.starts_with("partial")));
+    assert_eq!(h.p.phase(), Phase::Listening);
+
+    h.p.ptt_release().await;
+    let r = h.p.last_result().unwrap();
+    assert_eq!(
+        r.raw_transcript, "final words spoken here",
+        "the result comes from the full recording"
+    );
+    let after = interim_texts(&h).len();
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(
+        interim_texts(&h).len(),
+        after,
+        "no interim text after release"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn live_text_can_be_turned_off_and_is_skipped_for_slow_providers() {
+    let (h, _audio) = live_harness();
+    h.settings.write().unwrap().behavior.live_text = false;
+    h.p.ptt_press().unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(interim_texts(&h).is_empty());
+    h.p.cancel();
+
+    // The default test ASR does not support interim text.
+    let h = harness();
+    h.p.ptt_press().unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(interim_texts(&h).is_empty());
+    assert_eq!(h.asr.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn tap_mode_stops_by_itself_after_silence() {
+    let h = harness();
+    {
+        let mut s = h.settings.write().unwrap();
+        s.behavior.talk_mode = TalkMode::Tap;
+        s.behavior.silence_stop_secs = 2;
+    }
+    h.asr.push("stopped by silence detection", None);
+    h.p.ptt_press().unwrap();
+    assert_eq!(h.p.phase(), Phase::Listening);
+    // `now_ms` is wall-clock, so let real time pass alongside the paused timers.
+    for _ in 0..40 {
+        std::thread::sleep(Duration::from_millis(60));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        if h.p.phase() != Phase::Listening {
+            break;
+        }
+    }
+    wait_phase(&h.p, Phase::Done).await;
+    assert_eq!(
+        h.p.last_result().unwrap().raw_transcript,
+        "stopped by silence detection"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn hold_mode_does_not_stop_on_silence() {
+    let h = harness();
+    h.settings.write().unwrap().behavior.silence_stop_secs = 1;
+    h.p.ptt_press().unwrap();
+    std::thread::sleep(Duration::from_millis(1200));
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(h.p.phase(), Phase::Listening);
+    h.p.cancel();
+}
+
+#[tokio::test]
+async fn enter_is_not_pressed_for_fewer_than_three_words() {
+    let h = harness();
+    h.registry.set_auto_submit(&h.target_a.id, true).unwrap();
+    h.registry
+        .set_output(&h.target_a.id, OutputKind::Raw)
+        .unwrap();
+    for (text, submitted) in [
+        ("yes", false),
+        ("ship it", false),
+        ("ship it now", true),
+        ("修复超时", false),
+        ("修复登录接口超时", true),
+    ] {
+        h.asr.push(text, None);
+        speak(&h).await;
+        let call = h.injector.calls.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(call.1, text, "the text itself is always pasted");
+        assert_eq!(call.2, submitted, "{text}");
+    }
+}
+
+#[test]
+fn counts_words_across_scripts() {
+    assert_eq!(word_count(""), 0);
+    assert_eq!(word_count("  hello  "), 1);
+    assert_eq!(word_count("fix the login bug."), 4);
+    assert_eq!(word_count("修复登录接口的超时问题"), 6);
+    assert_eq!(word_count("fix 登录 bug"), 3);
+    assert_eq!(word_count("... !!"), 0);
 }

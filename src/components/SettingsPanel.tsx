@@ -13,6 +13,7 @@ import type {
   PromptProviderKind,
   ProviderHealth,
   Settings,
+  TalkMode,
   TargetSlot,
   WindowInfo,
 } from "../types";
@@ -55,6 +56,11 @@ const OUTPUT_HELP: Record<OutputKind, string> = {
   prompt: "Your words are rewritten into a clear, structured request. Adds a few seconds for the AI model.",
   normalized: "Your own words with spacing, capital letter and final full stop fixed, and project names corrected. Pasted as soon as recognition finishes.",
   raw: "The recognizer’s output with no changes at all. Pasted as soon as recognition finishes.",
+};
+
+const TALK_HELP: Record<TalkMode, string> = {
+  hold: "Recording runs only while the keys are held down.",
+  tap: "No need to keep holding. Recording also stops by itself after a stretch of silence (15 seconds by default).",
 };
 
 const PROMPT_HELP: Record<PromptProviderKind, string> = {
@@ -462,7 +468,16 @@ export function SettingsPanel() {
                 <option value="raw">Exactly what was heard (faster)</option>
               </select>
             </Field>
-            <Field label="Hold to talk" hint="Hold these keys while you speak, then let go. Alt is the Option key.">
+            <Field label="How to talk" hint={TALK_HELP[behavior.talk_mode]}>
+              <select
+                value={behavior.talk_mode}
+                onChange={(e) => patch("behavior", { talk_mode: e.target.value as TalkMode })}
+              >
+                <option value="hold">Hold the keys while speaking</option>
+                <option value="tap">Press once to start, again to stop</option>
+              </select>
+            </Field>
+            <Field label="Talk keys" hint="Alt is the Option key.">
               <input
                 type="text"
                 value={shortcuts.push_to_talk}
@@ -796,6 +811,19 @@ export function SettingsPanel() {
               onChange={(v) => patch("behavior", { follow_focus: v })}
             />
             <Toggle
+              label="Show my words while I am still speaking"
+              hint="Live text in the overlay. Needs the built-in Whisper server."
+              checked={behavior.live_text}
+              onChange={(v) => patch("behavior", { live_text: v })}
+            />
+            <NumberField
+              label="Tap mode: stop after silence (seconds)"
+              value={behavior.silence_stop_secs}
+              min={1}
+              max={120}
+              onChange={(v) => patch("behavior", { silence_stop_secs: v })}
+            />
+            <Toggle
               label="Automatically inject after processing"
               hint="Pastes into the target frozen when recording began. Never happens when the prompt failed or needs confirmation."
               checked={behavior.auto_inject}
@@ -803,7 +831,7 @@ export function SettingsPanel() {
             />
             <Toggle
               label="Automatically submit after injection (new targets)"
-              hint="Presses Enter after pasting. Off by default; applies to targets pinned from now on."
+              hint="Presses Enter after pasting, but only when you said at least three words. Off by default; applies to windows used from now on."
               checked={behavior.auto_submit}
               onChange={(v) => patch("behavior", { auto_submit: v })}
             />

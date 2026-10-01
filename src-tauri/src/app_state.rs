@@ -119,6 +119,7 @@ impl EventSink for TauriEventSink {
         let _ = match &event {
             AppEvent::StateChanged(s) => self.app.emit(name, s),
             AppEvent::RecordingLevel(l) => self.app.emit(name, l),
+            AppEvent::InterimTranscript(t) => self.app.emit(name, t),
             AppEvent::TargetsChanged(t) => self.app.emit(name, t),
             AppEvent::ProviderHealthChanged(h) => self.app.emit(name, h),
             AppEvent::UtteranceUpdated(u) => self.app.emit(name, u),
@@ -164,6 +165,8 @@ fn bundled_assets(app: &AppHandle) -> crate::providers::BundledAssets {
 enum Ptt {
     Press,
     Release,
+    /// Tap mode: start when idle, stop when recording.
+    Toggle,
 }
 
 fn handle_shortcut(
@@ -174,7 +177,16 @@ fn handle_shortcut(
 ) {
     if action == ShortcutAction::PushToTalk {
         // Press and release go through one queue so they are handled in order.
-        let _ = ptt.send(if pressed { Ptt::Press } else { Ptt::Release });
+        let tap = app.try_state::<AppState>().is_some_and(|s| {
+            s.settings.read().unwrap().behavior.talk_mode == config::TalkMode::Tap
+        });
+        let event = match (tap, pressed) {
+            (true, true) => Ptt::Toggle,
+            (true, false) => return, // key-up means nothing in tap mode
+            (false, true) => Ptt::Press,
+            (false, false) => Ptt::Release,
+        };
+        let _ = ptt.send(event);
         return;
     }
     if !pressed {
@@ -320,16 +332,17 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         let pipeline = pipeline.clone();
         tauri::async_runtime::spawn(async move {
             while let Some(event) = ptt_rx.recv().await {
-                match event {
-                    Ptt::Press => {
-                        let _ = pipeline.ptt_press();
-                    }
-                    Ptt::Release => {
-                        if let Some(job) = pipeline.begin_release() {
-                            let pipeline = pipeline.clone();
-                            tokio::spawn(async move { pipeline.process(job).await });
-                        }
-                    }
+                let recording = pipeline.phase() == Phase::Listening;
+                let start = match event {
+                    Ptt::Press => true,
+                    Ptt::Release => false,
+                    Ptt::Toggle => !recording,
+                };
+                if start {
+                    let _ = pipeline.ptt_press();
+                } else if let Some(job) = pipeline.begin_release() {
+                    let pipeline = pipeline.clone();
+                    tokio::spawn(async move { pipeline.process(job).await });
                 }
             }
         });

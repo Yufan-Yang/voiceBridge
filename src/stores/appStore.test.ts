@@ -38,7 +38,7 @@ const snapshot = (over: Partial<AppSnapshot>): AppSnapshot => ({ ...EMPTY_SNAPSH
 
 describe("appStore", () => {
   beforeEach(() => {
-    useAppStore.setState({ snapshot: EMPTY_SNAPSHOT, level: 0, health: null, lastInjection: null, actionError: null });
+    useAppStore.setState({ snapshot: EMPTY_SNAPSHOT, level: 0, interim: "", health: null, lastInjection: null, actionError: null });
   });
 
   it("starts with secure, idle defaults", () => {
@@ -85,6 +85,25 @@ describe("appStore", () => {
     expect(useAppStore.getState().snapshot.last_result?.raw_transcript).toBe("new text");
     store.applyUtterance({ ...utterance("new", "new text"), status: "injected" });
     expect(useAppStore.getState().snapshot.last_result?.status).toBe("injected");
+  });
+
+  it("shows interim text only for the recording in progress", () => {
+    const store = useAppStore.getState();
+    store.setSnapshot(snapshot({ phase: "LISTENING", utterance_id: "u1" }));
+    store.setInterim({ utterance_id: "old", text: "stale words" });
+    expect(useAppStore.getState().interim).toBe("");
+    store.setInterim({ utterance_id: "u1", text: "fix the login" });
+    expect(useAppStore.getState().interim).toBe("fix the login");
+    // Kept while the final pass runs, cleared when the result is ready.
+    store.setSnapshot(snapshot({ phase: "TRANSCRIBING", utterance_id: "u1" }));
+    expect(useAppStore.getState().interim).toBe("fix the login");
+    store.setSnapshot(snapshot({ phase: "READY", utterance_id: "u1" }));
+    expect(useAppStore.getState().interim).toBe("");
+    // A new recording never starts with the previous one's words.
+    store.setSnapshot(snapshot({ phase: "LISTENING", utterance_id: "u1" }));
+    store.setInterim({ utterance_id: "u1", text: "abc" });
+    store.setSnapshot(snapshot({ phase: "LISTENING", utterance_id: "u2" }));
+    expect(useAppStore.getState().interim).toBe("");
   });
 
   it("clears a previous action error when a new recording starts", () => {

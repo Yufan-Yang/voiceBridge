@@ -317,6 +317,37 @@ pub fn scan_project(root: &Path, limits: &ScanLimits) -> Vec<String> {
     c.terms
 }
 
+/// Current branch name from `.git/HEAD`, if `root` is a git checkout on a branch.
+pub fn git_branch(root: &Path) -> Option<String> {
+    let head = std::fs::read_to_string(root.join(".git").join("HEAD")).ok()?;
+    let branch = head.trim().strip_prefix("ref: refs/heads/")?;
+    (!branch.is_empty() && branch.len() <= 80).then(|| branch.to_string())
+}
+
+/// Identifier-like words from a window title: file names and names with
+/// inner capitals, digits, dots, dashes or underscores. Plain words such as
+/// "Visual" or "Terminal" are left out so they do not bias recognition.
+pub fn title_hints(title: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for token in title.split(|c: char| !(c.is_alphanumeric() || matches!(c, '.' | '_' | '-'))) {
+        let token = token.trim_matches(|c| matches!(c, '.' | '-' | '_'));
+        if token.len() < 3 || token.len() > 40 || !token.chars().any(|c| c.is_alphabetic()) {
+            continue;
+        }
+        let identifier_like = token
+            .chars()
+            .any(|c| matches!(c, '.' | '_' | '-') || c.is_ascii_digit())
+            || token.chars().skip(1).any(|c| c.is_uppercase());
+        if identifier_like && !out.iter().any(|t| t == token) {
+            out.push(token.to_string());
+        }
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
 /// Per-target vocabulary cache. Each target keeps its own term list, so
 /// switching targets switches hotwords and correction context with it.
 #[derive(Default)]
@@ -349,7 +380,25 @@ impl VocabStore {
         let mut out = Vec::new();
         let scanned = self.scanned.lock().unwrap();
         let scanned_terms = scanned.get(&target.id).map(|v| v.as_slice()).unwrap_or(&[]);
-        for t in target.manual_terms.iter().chain(scanned_terms) {
+        // Automatic hints, like a dictation tool that knows where you are:
+        // the project name, the current git branch, and identifier-like
+        // words from the window title (file names, CamelCase names).
+        let mut hints: Vec<String> = Vec::new();
+        if let Some(name) = &target.project_name {
+            hints.push(name.clone());
+        }
+        if let Some(root) = &target.project_root {
+            if let Some(branch) = git_branch(Path::new(root)) {
+                hints.push(branch);
+            }
+        }
+        hints.extend(title_hints(&target.title_hint));
+        for t in target
+            .manual_terms
+            .iter()
+            .chain(&hints)
+            .chain(scanned_terms)
+        {
             if seen.insert(t.clone()) {
                 out.push(t.clone());
             }
@@ -518,6 +567,41 @@ mod tests {
         );
         assert!(
             tb.contains(&"renderDashboard".to_string()) && !tb.contains(&"HandleLogin".to_string())
+        );
+    }
+
+    #[test]
+    fn automatic_hints_from_title_project_and_branch() {
+        assert_eq!(
+            title_hints("● useUserQuery.ts — voiceBridge — Visual Studio Code"),
+            vec!["useUserQuery.ts", "voiceBridge"]
+        );
+        assert!(title_hints("Terminal — zsh — 80×24").is_empty());
+        assert_eq!(
+            title_hints("api-server: feature_login (HEAD)"),
+            vec!["api-server", "feature_login", "HEAD"]
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("payments");
+        write(&root, ".git/HEAD", "ref: refs/heads/fix/login-timeout\n");
+        assert_eq!(git_branch(&root).as_deref(), Some("fix/login-timeout"));
+        write(&root, ".git/HEAD", "3f2c1a9d\n");
+        assert_eq!(git_branch(&root), None, "detached HEAD has no branch name");
+        write(&root, ".git/HEAD", "ref: refs/heads/fix/login-timeout\n");
+
+        let mut t = TargetSlot::from_window(
+            &MockDesktop::window("1", 1, "x", "checkout.rs — payments"),
+            1,
+            OutputKind::Prompt,
+        );
+        t.project_root = Some(root.to_string_lossy().to_string());
+        t.project_name = Some("payments".into());
+        t.manual_terms = vec!["Stripe".into()];
+        let terms = VocabStore::default().terms_for(&t);
+        assert_eq!(
+            terms,
+            vec!["Stripe", "payments", "fix/login-timeout", "checkout.rs"]
         );
     }
 }

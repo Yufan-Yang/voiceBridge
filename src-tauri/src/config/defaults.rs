@@ -77,6 +77,9 @@ impl Default for BehaviorSettings {
             completion_notice_ms: 4000,
             wheel_cycles_targets: true,
             follow_focus: true,
+            talk_mode: TalkMode::Hold,
+            silence_stop_secs: 15,
+            live_text: true,
         }
     }
 }
@@ -126,6 +129,7 @@ impl Settings {
             self.audio.input_device = None;
         }
 
+        self.behavior.silence_stop_secs = clamp_or(self.behavior.silence_stop_secs, 1, 120, 15);
         self.behavior.completion_notice_ms =
             clamp_or(self.behavior.completion_notice_ms, 500, 60_000, 4000);
 

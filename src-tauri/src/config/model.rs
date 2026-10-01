@@ -78,6 +78,18 @@ pub struct ShortcutSettings {
     pub inject_last_prompt: String,
 }
 
+/// How the talk shortcut works.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TalkMode {
+    /// Record while the shortcut is held.
+    #[default]
+    Hold,
+    /// Press once to start, press again to stop.
+    Tap,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(default)]
 #[ts(export)]
@@ -93,6 +105,11 @@ pub struct BehaviorSettings {
     /// Send each utterance to the window that has focus when Push-to-Talk
     /// is pressed. When off, only the manually selected target is used.
     pub follow_focus: bool,
+    pub talk_mode: TalkMode,
+    /// Tap mode: stop recording after this many seconds without speech.
+    pub silence_stop_secs: u32,
+    /// Show the words in the overlay while still speaking.
+    pub live_text: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]

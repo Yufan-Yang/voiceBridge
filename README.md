@@ -77,6 +77,14 @@ scripts/live-tests.sh all
 3. Hold `Ctrl+Option+Space`, speak, release.
 4. The overlay shows Listening → Transcribing → Compiling prompt → Ready, then pastes the compiled prompt into that window. Click ▾ to see the raw transcription, normalized transcription and compiled prompt, each with Copy and Inject.
 
+**Hold or tap.** Settings › "How to talk" switches between holding the keys while you speak and tap mode: press once to start, press again to stop. In tap mode recording also stops by itself after 15 seconds without speech (configurable), and always at the maximum recording length.
+
+**Live text.** While you are still speaking, the overlay shows the words recognized so far (the audio captured up to that point is re-transcribed about every 0.7 s). It is a preview only: what gets pasted always comes from the complete recording after you stop. Live text needs the Whisper server; it is off for providers that are too slow to run repeatedly.
+
+**Automatic hints.** The recognizer is given the project name, the current git branch (when a project directory is set for the window) and identifier-like words from the window title, such as file names and CamelCase names, in addition to any vocabulary you added.
+
+**Enter is guarded.** With "Press Enter after paste" enabled for a window, Enter is only pressed when you said at least three words, so a stray word from an accidental press is never submitted. Scripts written without spaces are counted at about two characters per word.
+
 **What gets pasted.** Settings › "What to paste" chooses between the prompt written by the AI model, your words tidied up (*normalized*: spacing, capital letter, final full stop, project identifiers corrected), or exactly what the recognizer heard (*raw*). Raw and normalized skip the prompt model, so they are pasted as soon as recognition finishes; the prompt can still be produced afterwards with "Recompile prompt". For languages without spaces or capitals, such as Chinese, raw and normalized are usually identical.
 
 **Timing.** After each utterance the overlay shows how long you spoke and how long processing took; the expanded view breaks that into recognition and prompt time.

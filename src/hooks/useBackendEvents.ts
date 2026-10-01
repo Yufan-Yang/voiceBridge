@@ -6,6 +6,7 @@ import type {
   AppError,
   AppSnapshot,
   InjectionOutcome,
+  InterimTranscript,
   ProvidersHealth,
   TargetsSnapshot,
   UtteranceResult,
@@ -26,6 +27,7 @@ export function useBackendEvents(): void {
 
     on<AppSnapshot>("state_changed", store.setSnapshot);
     on<number>("recording_level", store.setLevel);
+    on<InterimTranscript>("interim_transcript", store.setInterim);
     on<TargetsSnapshot>("targets_changed", store.setTargets);
     on<ProvidersHealth>("provider_health_changed", store.setHealth);
     on<UtteranceResult>("utterance_updated", store.applyUtterance);

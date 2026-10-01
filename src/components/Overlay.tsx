@@ -42,6 +42,7 @@ function useElapsed(startedMs: number | null): number {
 export function Overlay() {
   const snapshot = useAppStore((s) => s.snapshot);
   const level = useAppStore((s) => s.level);
+  const interim = useAppStore((s) => s.interim);
   const actionError = useAppStore((s) => s.actionError);
   const setActionError = useAppStore((s) => s.setActionError);
   const [pinnedOpen, setPinnedOpen] = useState(false);
@@ -154,6 +155,13 @@ export function Overlay() {
         ) : null}
         {isIndeterminate(phase) ? <ProgressBar tone={phaseTone(phase)} /> : null}
 
+        {interim && !showChips ? (
+          // Live words while speaking; the newest words stay visible.
+          <span className="interim" data-tauri-drag-region title={interim}>
+            <bdi>{interim}</bdi>
+          </span>
+        ) : null}
+
         {showChips ? (
           <div className="chips" data-tauri-drag-region>
             {targets.length === 0 ? (
@@ -174,11 +182,11 @@ export function Overlay() {
               ))
             )}
           </div>
-        ) : (
+        ) : interim ? null : (
           <span className="spacer" data-tauri-drag-region />
         )}
 
-        {!showChips && routed ? (
+        {!showChips && routed && !interim ? (
           <span className={`route${routed.status === "offline" ? " offline" : ""}`} data-tauri-drag-region>
             → {slotGlyph(routed.slot)} {targetLabel(routed)}
           </span>

@@ -15,6 +15,8 @@ use crate::error::{AppError, ErrorCode, Result};
 const LEVEL_INTERVAL: Duration = Duration::from_millis(60);
 
 struct Session {
+    sink: Arc<Sink>,
+    sample_rate: u32,
     stop_tx: mpsc::Sender<()>,
     join: thread::JoinHandle<Result<AudioBuffer>>,
 }
@@ -84,7 +86,7 @@ fn pick_device(host: &cpal::Host, wanted: Option<&str>) -> Result<cpal::Device> 
 fn run_capture(
     options: CaptureOptions,
     on_level: LevelCallback,
-    ready_tx: mpsc::Sender<Result<()>>,
+    ready_tx: mpsc::Sender<Result<(Arc<Sink>, u32)>>,
     stop_rx: mpsc::Receiver<()>,
 ) -> Result<AudioBuffer> {
     let setup = || -> Result<(cpal::Stream, Arc<Sink>, u32, Arc<AtomicBool>)> {
@@ -158,7 +160,7 @@ fn run_capture(
 
     let (stream, sink, sample_rate, failed) = match setup() {
         Ok(parts) => {
-            let _ = ready_tx.send(Ok(()));
+            let _ = ready_tx.send(Ok((parts.1.clone(), parts.2)));
             parts
         }
         Err(e) => {
@@ -202,8 +204,13 @@ impl AudioSource for CpalAudioSource {
             .spawn(move || run_capture(options, on_level, ready_tx, stop_rx))
             .map_err(capture_failed)?;
         match ready_rx.recv_timeout(Duration::from_secs(5)) {
-            Ok(Ok(())) => {
-                *guard = Some(Session { stop_tx, join });
+            Ok(Ok((sink, sample_rate))) => {
+                *guard = Some(Session {
+                    sink,
+                    sample_rate,
+                    stop_tx,
+                    join,
+                });
                 Ok(())
             }
             Ok(Err(e)) => Err(e),
@@ -241,5 +248,15 @@ impl AudioSource for CpalAudioSource {
             .input_devices()
             .map(|devices| devices.filter_map(|d| d.name().ok()).collect())
             .unwrap_or_default()
+    }
+
+    fn snapshot(&self) -> Option<AudioBuffer> {
+        let guard = self.session.lock().ok()?;
+        let session = guard.as_ref()?;
+        let samples = session.sink.samples.lock().ok()?.clone();
+        Some(AudioBuffer {
+            samples,
+            sample_rate: session.sample_rate,
+        })
     }
 }

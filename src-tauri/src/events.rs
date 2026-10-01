@@ -11,6 +11,7 @@ use crate::types::*;
 pub enum AppEvent {
     StateChanged(AppSnapshot),
     RecordingLevel(f32),
+    InterimTranscript(InterimTranscript),
     TargetsChanged(TargetsSnapshot),
     ProviderHealthChanged(ProvidersHealth),
     UtteranceUpdated(UtteranceResult),
@@ -25,6 +26,7 @@ impl AppEvent {
         match self {
             AppEvent::StateChanged(_) => "state_changed",
             AppEvent::RecordingLevel(_) => "recording_level",
+            AppEvent::InterimTranscript(_) => "interim_transcript",
             AppEvent::TargetsChanged(_) => "targets_changed",
             AppEvent::ProviderHealthChanged(_) => "provider_health_changed",
             AppEvent::UtteranceUpdated(_) => "utterance_updated",

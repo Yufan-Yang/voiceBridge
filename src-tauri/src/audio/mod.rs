@@ -58,6 +58,11 @@ pub trait AudioSource: Send + Sync {
     /// Stops capture and discards the audio.
     fn abort(&self);
     fn list_devices(&self) -> Vec<String>;
+    /// Audio captured so far while recording continues, for live interim
+    /// transcription. `None` when not recording or not supported.
+    fn snapshot(&self) -> Option<AudioBuffer> {
+        None
+    }
 }
 
 /// Converts captured audio to what ASR expects: 16 kHz mono, optionally with
@@ -152,6 +157,14 @@ impl AudioSource for WavFileSource {
 
     fn list_devices(&self) -> Vec<String> {
         vec![format!("WAV file: {}", self.path.display())]
+    }
+
+    fn snapshot(&self) -> Option<AudioBuffer> {
+        if *self.active.lock().unwrap() {
+            load_wav(&self.path).ok()
+        } else {
+            None
+        }
     }
 }
 
