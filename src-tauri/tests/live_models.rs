@@ -226,6 +226,7 @@ async fn whisper_cpp_transcribes_speech() {
         utterance_id: "live-whisper".into(),
         hotwords: hotwords(),
         language: Some("en".into()),
+        interim: false,
     };
     let started = Instant::now();
     let out = provider
@@ -302,6 +303,7 @@ async fn fun_asr_sidecar_transcribes_speech() {
         utterance_id: "live-funasr".into(),
         hotwords: hotwords(),
         language: None,
+        interim: false,
     };
     let started = Instant::now();
     let out = provider
@@ -355,6 +357,7 @@ async fn whisper_server_stays_loaded_and_transcribes_quickly() {
         utterance_id: "live-whisper-server".into(),
         hotwords: hotwords(),
         language: Some("en".into()),
+        interim: false,
     };
     for round in 0..3 {
         let started = Instant::now();
@@ -430,5 +433,86 @@ async fn whisper_server_stays_loaded_and_transcribes_quickly() {
         .transcribe(sample_audio(&wav), context, CancellationToken::new())
         .await
         .expect("recovers after a crash");
+    sidecar.stop().await;
+}
+
+/// Character error rate on a small set of spoken Chinese coding requests
+/// (`VB_ZH_DIR` holds `refs.json` and `s0.wav`…). Guards against the model
+/// repeating whole sentences, which a too-small encoder window causes.
+#[tokio::test]
+#[ignore = "needs whisper-server, a ggml model and the Chinese sample set"]
+async fn whisper_server_chinese_accuracy() {
+    use voicebridge_lib::asr::whisper_server::WhisperServerProvider;
+    let (runtime, model, dir) = require_env!("VB_WHISPER_SERVER", "VB_WHISPER_MODEL", "VB_ZH_DIR");
+    let refs: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string(format!("{dir}/refs.json")).unwrap())
+            .unwrap();
+    let logs = tempfile::tempdir().unwrap();
+    let sidecar = Arc::new(SidecarManager::new(
+        "asr-zh",
+        logs.path().to_path_buf(),
+        ErrorCode::AsrProcessFailed,
+    ));
+    let provider =
+        WhisperServerProvider::new(sidecar.clone(), runtime, model, Duration::from_secs(120));
+    provider.start().await.expect("start whisper-server");
+
+    let strip = |s: &str| -> Vec<char> {
+        s.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(|c| c.to_lowercase())
+            .collect()
+    };
+    let distance = |a: &[char], b: &[char]| -> usize {
+        let mut prev: Vec<usize> = (0..=b.len()).collect();
+        for (i, ca) in a.iter().enumerate() {
+            let mut cur = vec![i + 1];
+            for (j, cb) in b.iter().enumerate() {
+                cur.push(
+                    (prev[j + 1] + 1)
+                        .min(cur[j] + 1)
+                        .min(prev[j] + usize::from(ca != cb)),
+                );
+            }
+            prev = cur;
+        }
+        prev[b.len()]
+    };
+
+    let (mut errors, mut total, mut elapsed) = (0usize, 0usize, Duration::ZERO);
+    for (i, reference) in refs.iter().enumerate() {
+        let context = AsrContext {
+            utterance_id: format!("zh-{i}"),
+            hotwords: vec![],
+            language: Some("zh".into()),
+            interim: false,
+        };
+        let started = Instant::now();
+        let out = provider
+            .transcribe(
+                sample_audio(&format!("{dir}/s{i}.wav")),
+                context,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("transcribe");
+        elapsed += started.elapsed();
+        let (want, got) = (strip(reference), strip(&out.text));
+        let e = distance(&want, &got);
+        eprintln!("[{e:2}] {}", out.text);
+        assert!(
+            got.len() * 2 < want.len() * 3,
+            "clip {i} looks repeated: {}",
+            out.text
+        );
+        errors += e;
+        total += want.len();
+    }
+    let cer = 100.0 * errors as f64 / total as f64;
+    eprintln!(
+        "character error rate {cer:.1}%, average {:?} per clip",
+        elapsed / refs.len() as u32
+    );
+    assert!(cer < 10.0, "character error rate {cer:.1}%");
     sidecar.stop().await;
 }

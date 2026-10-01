@@ -78,10 +78,28 @@ pub fn prepare_for_asr(audio: AudioBuffer, vad_enabled: bool) -> Result<AudioBuf
     if samples.len() < (ASR_SAMPLE_RATE as usize * 150) / 1000 {
         return Err(AppError::new(ErrorCode::NoSpeechDetected));
     }
+    let samples = normalize_gain(samples);
     Ok(AudioBuffer {
         samples,
         sample_rate: ASR_SAMPLE_RATE,
     })
+}
+
+/// Brings quiet recordings up to a consistent level. Recognition is clearly
+/// worse on very quiet input, which is common with headset microphones.
+/// Loud recordings are left alone, and the boost is capped so that near
+/// silence is not turned into loud noise.
+pub fn normalize_gain(mut samples: Vec<f32>) -> Vec<f32> {
+    const TARGET_PEAK: f32 = 0.7;
+    const MAX_GAIN: f32 = 20.0;
+    let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    if peak > 0.0 && peak < TARGET_PEAK {
+        let gain = (TARGET_PEAK / peak).min(MAX_GAIN);
+        for s in &mut samples {
+            *s *= gain;
+        }
+    }
+    samples
 }
 
 /// Loads a WAV file as mono f32. Used by the development-only simulation.
@@ -248,6 +266,22 @@ mod tests {
         };
         let err = prepare_for_asr(silence, true).unwrap_err();
         assert_eq!(err.code, ErrorCode::NoSpeechDetected);
+    }
+
+    #[test]
+    fn quiet_recordings_are_boosted_within_limits() {
+        let peak = |v: &[f32]| v.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!((peak(&normalize_gain(vec![0.05, -0.1, 0.02])) - 0.7).abs() < 1e-5);
+        assert_eq!(
+            normalize_gain(vec![0.9, -0.8]),
+            vec![0.9, -0.8],
+            "loud audio is untouched"
+        );
+        assert!(
+            (peak(&normalize_gain(vec![0.001, -0.001])) - 0.02).abs() < 1e-5,
+            "boost is capped at 20x"
+        );
+        assert_eq!(normalize_gain(vec![0.0; 4]), vec![0.0; 4]);
     }
 
     #[test]

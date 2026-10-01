@@ -13,6 +13,9 @@ pub struct AsrContext {
     pub hotwords: Vec<String>,
     /// Optional language hint. `None` lets the runtime decide.
     pub language: Option<String>,
+    /// A live preview while the user is still speaking: speed matters more
+    /// than accuracy, and the result is never pasted.
+    pub interim: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

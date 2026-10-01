@@ -26,6 +26,7 @@ export VB_WHISPER_SERVER="${VB_WHISPER_SERVER:-$(ls "$VB_HOME"/whisper.cpp-*/bui
 export VB_WHISPER_MODEL="${VB_WHISPER_MODEL:-$(ls "$VB_HOME"/models/ggml-*.bin 2>/dev/null | head -1)}"
 export VB_FUNASR_PYTHON="${VB_FUNASR_PYTHON:-$VB_HOME/venv/bin/python}"
 export VB_FUNASR_MODEL="${VB_FUNASR_MODEL:-$VB_HOME/models/Fun-ASR-Nano-2512}"
+export VB_ZH_DIR="${VB_ZH_DIR:-$([ -f "$VB_HOME/zh/refs.json" ] && echo "$VB_HOME/zh")}"
 export VB_SAMPLE_WAV="${VB_SAMPLE_WAV:-$VB_HOME/samples/sample-en.wav}"
 
 MANIFEST=src-tauri/Cargo.toml

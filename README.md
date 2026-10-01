@@ -150,7 +150,11 @@ VoiceBridge runs `sidecars/funasr_sidecar.py` and talks to it over stdin/stdout 
 
 With `whisper-server` the model stays loaded for as long as the app runs, so an utterance takes under a second on an M2 Pro and there is no reload between utterances. The server binds 127.0.0.1 on a random port; it has no API-key option, so the session token is used as a secret request-path prefix (other paths return 404). Audio is sent in memory, with no temporary file.
 
-For short clips the app limits Whisper's encoder window to the clip length (in steps of 256 frames, which is what decodes reliably on `large-v3-turbo`) instead of the fixed 30 s window. A 7 s clip takes about 0.4 s instead of 0.9 s; clips over about 24 s use the full window.
+The final transcript always uses Whisper's full 30 s encoder window (about 0.9 s per utterance on an M2 Pro). A smaller window is twice as fast but unreliable: fitted tightly to the clip it made the model repeat whole sentences (40% character error rate on a Chinese test set, against 7% for the full window), so it is used only for the live preview, with an 8 s margin. A transcript that is one sentence repeated is also collapsed to a single copy.
+
+**Chinese.** When the language is set to Chinese, the recognizer is primed with a short glossary of common software terms, which fixes homophone mistakes such as 重试/重视, 分支/分之, 重构/中构 and 判空/判控 and steers the output to simplified characters. On ten synthesized coding requests the character error rate is 6.6%, most of which is digits written as "30" instead of "三十". The normalized text uses full-width punctuation. Set the language explicitly rather than leaving it on automatic to get this.
+
+**Microphone quality.** Quiet recordings are boosted to a consistent level, the silence detector adapts to quiet microphones, and audio is low-pass filtered before being reduced to 16 kHz. A Bluetooth headset microphone still limits accuracy: macOS switches the headset to a low-bitrate call mode while it records. A wired or built-in microphone gives noticeably better results.
 
 With `whisper-cli` the program is started once per utterance and reads the audio from a temporary WAV (owner-only permissions, deleted when the request ends). This is slower, and after idle periods the first run can take about 20 s while macOS recompiles the GPU shaders.
 

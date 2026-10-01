@@ -139,6 +139,7 @@ mod tests {
             utterance_id: "u".into(),
             hotwords: vec!["useUserQuery".into(), "userId".into()],
             language: Some("en".into()),
+            interim: false,
         };
         let args = whisper_args("/m.bin", "/tmp/a.wav", &ctx);
         assert!(args.windows(2).any(|w| w == ["-l", "en"]));

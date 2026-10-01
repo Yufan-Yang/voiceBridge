@@ -501,6 +501,7 @@ impl Pipeline {
                 hotwords: Vec::new(),
                 language: Some(settings.models.asr_language.clone())
                     .filter(|l| !l.trim().is_empty()),
+                interim: true,
             };
             let result = asr
                 .transcribe(audio, context, CancellationToken::new())
@@ -752,6 +753,7 @@ impl Pipeline {
             utterance_id: uid(),
             hotwords: terms.iter().take(MAX_CONTEXT_TERMS).cloned().collect(),
             language: Some(settings.models.asr_language.clone()).filter(|l| !l.trim().is_empty()),
+            interim: false,
         };
         let asr_started = Instant::now();
         let transcript = run_cancellable(

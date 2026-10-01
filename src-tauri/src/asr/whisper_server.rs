@@ -65,17 +65,20 @@ pub fn wav_bytes(audio: &AudioBuffer) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Encoder context for a clip of `duration_ms`.
+/// Reduced encoder context for a clip of `duration_ms`, used only for the
+/// live preview while the user is still speaking.
 ///
 /// Whisper normally encodes a fixed 30 s window (1500 frames, 50 per second)
-/// no matter how short the clip is, which is most of the recognition time.
-/// Limiting the window to the clip length makes short utterances several
-/// times faster. Measured on large-v3-turbo: only multiples of 256 decode
-/// reliably (other sizes produced garbage), so the size is rounded up to one,
-/// with a margin of about 1.3 s. Returns 0 (the full window) for long clips.
+/// no matter how short the clip is. A smaller window is roughly twice as
+/// fast, but it is fragile: on large-v3-turbo only multiples of 256 decode at
+/// all, and a window that fits the clip too tightly makes the model repeat
+/// whole sentences (measured: 40% character error rate on Chinese with a
+/// 1.3 s margin, against 7% for the full window). The final transcript
+/// therefore always uses the full window; the preview uses a generous 8 s
+/// margin. Returns 0 (the full window) for long clips.
 pub fn audio_ctx_for(duration_ms: u32) -> u32 {
     const FRAMES_PER_SEC: u32 = 50;
-    const MARGIN: u32 = 64;
+    const MARGIN: u32 = 400;
     const STEP: u32 = 256;
     let needed = duration_ms * FRAMES_PER_SEC / 1000 + MARGIN;
     let rounded = needed.div_ceil(STEP) * STEP;
@@ -84,6 +87,61 @@ pub fn audio_ctx_for(duration_ms: u32) -> u32 {
     } else {
         rounded
     }
+}
+
+/// Common Chinese software terms that Whisper otherwise confuses with
+/// homophones (重试/重视, 分支/分之, 重构/中构, 判空/判控). Given as part of the
+/// initial prompt when the dictation language is Chinese; it also steers the
+/// output towards simplified characters.
+pub const ZH_DEV_GLOSSARY: &str = "以下是普通话的句子，内容与软件开发有关。常用词：登录、接口、重试、分支、构建、重构、判空、函数、组件、变量、单元测试、数据库迁移、配置文件、端口、缓存、部署。";
+
+/// Initial prompt for Whisper: the language glossary plus project hotwords.
+pub fn initial_prompt(context: &AsrContext) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if context
+        .language
+        .as_deref()
+        .is_some_and(|l| l.to_ascii_lowercase().starts_with("zh"))
+    {
+        parts.push(ZH_DEV_GLOSSARY.to_string());
+    }
+    if !context.hotwords.is_empty() {
+        parts.push(
+            context
+                .hotwords
+                .iter()
+                .take(60)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
+/// Whisper sometimes emits the same sentence two or more times in a row.
+/// When the whole transcript is one unit repeated, keep a single copy.
+pub fn collapse_repeats(text: &str) -> String {
+    let chars: Vec<char> = text.trim().chars().collect();
+    let n = chars.len();
+    // Only whole-sentence repeats: the unit must be reasonably long.
+    for unit in 6..=n / 2 {
+        let head: String = chars[..unit].iter().collect();
+        let head = head.trim();
+        if head.is_empty() {
+            continue;
+        }
+        let mut rest: &str = text.trim();
+        let mut copies = 0;
+        while let Some(stripped) = rest.trim_start().strip_prefix(head) {
+            rest = stripped;
+            copies += 1;
+        }
+        if copies >= 2 && rest.trim().is_empty() {
+            return head.to_string();
+        }
+    }
+    text.trim().to_string()
 }
 
 impl WhisperServerProvider {
@@ -198,19 +256,18 @@ impl WhisperServerProvider {
                     .clone()
                     .unwrap_or_else(|| "auto".to_string()),
             );
-        let audio_ctx = audio_ctx_for(audio.duration_ms());
+        // The accurate full window for the final transcript; the smaller,
+        // faster one only for the live preview.
+        let audio_ctx = if context.interim {
+            audio_ctx_for(audio.duration_ms())
+        } else {
+            0
+        };
         if audio_ctx > 0 {
             form = form.text("audio_ctx", audio_ctx.to_string());
         }
-        if !context.hotwords.is_empty() {
-            // whisper.cpp biases decoding with an initial prompt.
-            let prompt = context
-                .hotwords
-                .iter()
-                .take(60)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ");
+        // whisper.cpp biases decoding with an initial prompt.
+        if let Some(prompt) = initial_prompt(context) {
             form = form.text("prompt", prompt);
         }
         let url = format!(
@@ -243,7 +300,9 @@ impl WhisperServerProvider {
         let text = body["text"]
             .as_str()
             .ok_or_else(|| failed("response had no text"))?;
-        Ok(text.split_whitespace().collect::<Vec<_>>().join(" "))
+        Ok(collapse_repeats(
+            &text.split_whitespace().collect::<Vec<_>>().join(" "),
+        ))
     }
 }
 
@@ -315,20 +374,60 @@ mod tests {
     }
 
     #[test]
-    fn audio_context_scales_with_clip_length_in_safe_steps() {
-        assert_eq!(audio_ctx_for(500), 256);
-        assert_eq!(audio_ctx_for(2_500), 256);
-        assert_eq!(audio_ctx_for(6_900), 512);
-        assert_eq!(audio_ctx_for(9_600), 768);
-        assert_eq!(audio_ctx_for(20_000), 1280);
-        assert_eq!(audio_ctx_for(25_000), 0, "long clips use the full window");
-        assert_eq!(audio_ctx_for(60_000), 0);
+    fn preview_window_keeps_a_generous_margin() {
+        assert_eq!(audio_ctx_for(500), 512);
+        assert_eq!(audio_ctx_for(5_900), 768);
+        assert_eq!(audio_ctx_for(9_600), 1024);
+        assert_eq!(audio_ctx_for(17_000), 1280);
+        assert_eq!(audio_ctx_for(18_000), 0, "long clips use the full window");
         for ms in (0..30_000).step_by(137) {
             let ctx = audio_ctx_for(ms);
             assert!(ctx.is_multiple_of(256));
-            // The window always covers the whole clip.
-            assert!(ctx == 0 || ctx * 1000 / 50 >= ms);
+            // At least 8 s beyond the end of the clip.
+            assert!(ctx == 0 || ctx * 1000 / 50 >= ms + 8_000);
         }
+    }
+
+    #[test]
+    fn chinese_gets_a_glossary_prompt_and_hotwords_are_appended() {
+        let mut ctx = AsrContext {
+            language: Some("zh".into()),
+            ..Default::default()
+        };
+        assert_eq!(initial_prompt(&ctx).as_deref(), Some(ZH_DEV_GLOSSARY));
+        ctx.hotwords = vec!["useUserQuery".into(), "userId".into()];
+        let p = initial_prompt(&ctx).unwrap();
+        assert!(p.starts_with(ZH_DEV_GLOSSARY) && p.ends_with("useUserQuery, userId"));
+        ctx.language = Some("en".into());
+        assert_eq!(
+            initial_prompt(&ctx).as_deref(),
+            Some("useUserQuery, userId")
+        );
+        ctx.hotwords.clear();
+        assert_eq!(initial_prompt(&ctx), None);
+    }
+
+    #[test]
+    fn repeated_sentences_are_collapsed() {
+        let s = "先跑一下单元测试,如果有失败的就把报错信息贴出来。";
+        assert_eq!(collapse_repeats(&format!("{s} {s}")), s);
+        assert_eq!(collapse_repeats(&format!("{s}{s}{s}")), s);
+        assert_eq!(
+            collapse_repeats("Add two tests. Add two tests."),
+            "Add two tests."
+        );
+        // Not a pure repeat: left alone.
+        assert_eq!(
+            collapse_repeats(&format!("{s} 然后提交。")),
+            format!("{s} 然后提交。")
+        );
+        assert_eq!(
+            collapse_repeats("no no no"),
+            "no no no",
+            "short repeats may be intentional"
+        );
+        assert_eq!(collapse_repeats("test the test"), "test the test");
+        assert_eq!(collapse_repeats(""), "");
     }
 
     #[test]
