@@ -1,6 +1,6 @@
 [package]
 name = "voicebridge"
-version = "0.2.2"
+version = "0.2.3"
 description = "Local push-to-talk voice input for coding windows"
 edition = "2021"
 

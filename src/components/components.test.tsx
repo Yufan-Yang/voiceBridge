@@ -75,7 +75,7 @@ describe("TargetChip", () => {
       <TargetChip target={{ ...target, status: "offline" }} selected={false} onRemove={() => {}} />,
     );
     expect(removable).toContain("chip-remove");
-    expect(renderToStaticMarkup(<TargetChip target={target} selected onRemove={() => {}} />)).not.toContain("chip-remove");
+    expect(renderToStaticMarkup(<TargetChip target={target} selected onRemove={() => {}} />)).toContain("chip-remove");
     const receiving = renderToStaticMarkup(<TargetChip target={target} selected receiving />);
     expect(receiving).toContain("→");
     expect(receiving).toContain("②");

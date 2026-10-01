@@ -22,7 +22,12 @@ pub struct TargetRegistry {
     inner: Mutex<Inner>,
     /// Target ids in the order they were last spoken to (oldest first).
     recent: Mutex<Vec<String>>,
+    /// Consecutive checks in which an auto-tracked target had no window.
+    missing: Mutex<std::collections::HashMap<String, u8>>,
 }
+
+/// Checks in a row a window must be missing before its target is dropped.
+const PRUNE_AFTER_CHECKS: u8 = 3;
 
 fn not_found() -> AppError {
     AppError::new(ErrorCode::TargetNotFound).with_details("no target with that id")
@@ -35,6 +40,7 @@ impl TargetRegistry {
             store,
             inner: Mutex::new(Inner::default()),
             recent: Mutex::new(Vec::new()),
+            missing: Mutex::new(Default::default()),
         }
     }
 
@@ -292,21 +298,31 @@ impl TargetRegistry {
     }
 
     fn prune_closed(&self) -> bool {
-        let gone: Vec<String> = self
-            .list()
-            .into_iter()
-            .filter(|t| t.auto_tracked)
-            .filter(|t| {
-                // A lookup error is not proof the window closed.
-                match self.wm.window_info(&t.platform_window_id) {
-                    Ok(Some(w)) => !matcher::identity_matches(t, &w),
-                    Ok(None) => true,
-                    Err(_) => false,
-                }
-            })
-            .map(|t| t.id)
-            .collect();
+        // A failed or empty listing is not proof that anything closed.
+        let windows = match self.wm.list_windows() {
+            Ok(w) if !w.is_empty() => w,
+            _ => return false,
+        };
+        let mut missing = self.missing.lock().unwrap();
+        let mut gone = Vec::new();
+        for t in self.list() {
+            let closed = t.auto_tracked
+                && !windows.iter().any(|w| matcher::identity_matches(&t, w))
+                && matches!(self.wm.window_info(&t.platform_window_id), Ok(None));
+            if !closed {
+                missing.remove(&t.id);
+                continue;
+            }
+            // Only after several checks in a row, so a momentary gap in the
+            // system's window list cannot drop a live window.
+            let seen = missing.entry(t.id.clone()).or_insert(0);
+            *seen += 1;
+            if *seen >= PRUNE_AFTER_CHECKS {
+                gone.push(t.id);
+            }
+        }
         for id in &gone {
+            missing.remove(id);
             let _ = self.unbind(id);
         }
         self.recent.lock().unwrap().retain(|id| !gone.contains(id));
@@ -681,6 +697,23 @@ mod tests {
         assert!(reg.refresh_status(false));
         assert_eq!(reg.list().len(), 3, "pinned mode keeps closed windows");
 
+        // An empty window list proves nothing, however often it is seen.
+        for _ in 0..5 {
+            reg.refresh_status(true);
+        }
+        assert_eq!(reg.list().len(), 3);
+        desk.add_window(MockDesktop::window("9", 90, "/Apps/Other", "other"));
+
+        // One or two misses are tolerated; a window that reappears resets it.
+        reg.refresh_status(true);
+        reg.refresh_status(true);
+        assert!(reg.get(&plain.id).is_some());
+        desk.add_window(MockDesktop::window("1", 10, "/Apps/Claude", "backend"));
+        reg.refresh_status(true);
+        desk.remove_window("1");
+        reg.refresh_status(true);
+        reg.refresh_status(true);
+        assert!(reg.get(&plain.id).is_some());
         assert!(reg.refresh_status(true));
         assert!(reg.get(&plain.id).is_none());
         assert!(reg.get(&kept.id).is_some(), "renamed target is kept");

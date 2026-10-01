@@ -220,11 +220,15 @@ button:disabled {
 }
 
 .chip-remove {
-  border-color: var(--orange);
   border-left: none;
   border-radius: 0 4px 4px 0;
-  color: var(--orange);
+  color: var(--muted);
   padding: 2px 5px;
+}
+
+.chip-remove.offline {
+  border-color: var(--orange);
+  color: var(--orange);
 }
 
 .chip-arrow,
@@ -578,6 +582,21 @@ select {
 
 .footer-error {
   color: var(--red);
+}
+
+button.danger {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.target-menu header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.target-menu .row {
+  margin-bottom: 0;
 }
 
 button.primary {

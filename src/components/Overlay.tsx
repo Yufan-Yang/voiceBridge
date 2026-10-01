@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { emit } from "@tauri-apps/api/event";
-import { Menu } from "@tauri-apps/api/menu";
 import { LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { run } from "../hooks/useBackendEvents";
@@ -16,7 +15,7 @@ import {
   targetLabel,
 } from "../services/format";
 import { useAppStore } from "../stores/appStore";
-import type { OutputKind, TargetSlot } from "../types";
+import type { OutputKind } from "../types";
 import { ProgressBar } from "./ProgressBar";
 import { ResultPreview } from "./ResultPreview";
 import { StatusIndicator } from "./StatusIndicator";
@@ -46,6 +45,7 @@ export function Overlay() {
   const actionError = useAppStore((s) => s.actionError);
   const setActionError = useAppStore((s) => s.setActionError);
   const [pinnedOpen, setPinnedOpen] = useState(false);
+  const [menuId, setMenuId] = useState<string | null>(null);
   const [wheelCycles, setWheelCycles] = useState(true);
   const lastWheel = useRef(0);
 
@@ -54,7 +54,8 @@ export function Overlay() {
   const busy = isBusy(phase);
   const error = snapshot.error ?? actionError;
   // Expand temporarily after completion or on problems; otherwise stay minimal.
-  const expanded = pinnedOpen || phase === "READY" || phase === "ERROR" || (!busy && actionError !== null);
+  const menuOpen = menuId !== null && !busy && targets.some((t) => t.id === menuId);
+  const expanded = menuOpen || pinnedOpen || phase === "READY" || phase === "ERROR" || (!busy && actionError !== null);
 
   useEffect(() => {
     void getCurrentWindow().setSize(new LogicalSize(WIDTH, expanded ? EXPANDED_HEIGHT : BAR_HEIGHT));
@@ -70,62 +71,10 @@ export function Overlay() {
   const defaultKind: OutputKind =
     targets.find((t) => t.id === result?.frozen_target_id)?.preferred_output ?? "prompt";
 
-  const openMenu = async (target: TargetSlot) => {
-    const suggestion = snapshot.suggestions.find((s) => s.target_id === target.id);
-    const menu = await Menu.new({
-      items: [
-        {
-          id: "rename",
-          text: "Rename…",
-          action: () => {
-            void api.openSettings().then(() => emit("show_targets_tab", target.id));
-          },
-        },
-        {
-          id: "project",
-          text: target.project_root ? `Project: ${target.project_name ?? target.project_root}…` : "Set project directory…",
-          action: () => {
-            void open({ directory: true, multiple: false, title: "Project directory" }).then((dir) => {
-              if (typeof dir === "string") void run(() => api.setProjectRoot(target.id, dir));
-            });
-          },
-        },
-        ...OUTPUTS.map((kind) => ({
-          id: `output-${kind}`,
-          text: `${target.preferred_output === kind ? "✓ " : "    "}Output: ${kind}`,
-          action: () => {
-            void run(() => api.setTargetOutput(target.id, kind));
-          },
-        })),
-        {
-          id: "submit",
-          text: `${target.auto_submit ? "✓ " : "    "}Press Enter after paste`,
-          action: () => {
-            void run(() => api.setTargetAutoSubmit(target.id, !target.auto_submit));
-          },
-        },
-        ...(suggestion
-          ? [
-              {
-                id: "rebind",
-                text: `Rebind to “${suggestion.window.title || suggestion.window.app_name}”`,
-                action: () => {
-                  void run(() => api.confirmRebind(target.id, suggestion.window.platform_window_id));
-                },
-              },
-            ]
-          : []),
-        {
-          id: "unbind",
-          text: target.status === "offline" ? "Remove (window closed)" : "Unbind",
-          action: () => {
-            void run(() => api.unbindTarget(target.id));
-          },
-        },
-      ],
-    });
-    await menu.popup();
-  };
+  // Target options live in the overlay itself: items of a native popup menu
+  // never reached the page from this non-activating panel.
+  const menuTarget = targets.find((t) => t.id === menuId) ?? null;
+  const menuSuggestion = menuTarget ? snapshot.suggestions.find((s) => s.target_id === menuTarget.id) : undefined;
 
   const onWheel = (deltaY: number) => {
     if (!wheelCycles || !showChips || targets.length < 2) return;
@@ -141,7 +90,7 @@ export function Overlay() {
   else if (phase === "ERROR" && error) detail = error.message;
 
   return (
-    <div className={`overlay tone-${phaseTone(phase)}${expanded ? " expanded" : ""}`}>
+    <div className={`overlay tone-${phaseTone(phase)}${expanded ? " expanded" : ""}`} onContextMenu={(e) => e.preventDefault()}>
       <div className="bar" data-tauri-drag-region onWheel={(e) => onWheel(e.deltaY)}>
         <StatusIndicator phase={phase} detail={detail} />
 
@@ -177,7 +126,7 @@ export function Overlay() {
                   hasSuggestion={snapshot.suggestions.some((s) => s.target_id === t.id)}
                   onSelect={(target) => void run(() => api.selectTarget(target.id))}
                   onActivate={(target) => void run(() => api.activateTarget(target.id))}
-                  onContextMenu={(target) => void openMenu(target)}
+                  onContextMenu={(target) => setMenuId((id) => (id === target.id ? null : target.id))}
                   onRemove={(target) => void run(() => api.unbindTarget(target.id))}
                 />
               ))
@@ -214,7 +163,90 @@ export function Overlay() {
         </span>
       </div>
 
-      {expanded ? (
+      {menuOpen && menuTarget ? (
+        <div className="preview target-menu">
+          <header>
+            <span className="variant-title">
+              {slotGlyph(menuTarget.slot)} {targetLabel(menuTarget)}
+              {menuTarget.status === "offline" ? " — window closed" : ""}
+            </span>
+            <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setMenuId(null)}>
+              Close
+            </button>
+          </header>
+          <div className="row">
+            <span className="field-label">Paste</span>
+            {OUTPUTS.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                className={menuTarget.preferred_output === kind ? "primary" : ""}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => void run(() => api.setTargetOutput(menuTarget.id, kind))}
+              >
+                {kind}
+              </button>
+            ))}
+          </div>
+          <div className="row">
+            <button
+              type="button"
+              className={menuTarget.auto_submit ? "primary" : ""}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => void run(() => api.setTargetAutoSubmit(menuTarget.id, !menuTarget.auto_submit))}
+            >
+              {menuTarget.auto_submit ? "✓ " : ""}Press Enter after paste
+            </button>
+          </div>
+          <div className="row">
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setMenuId(null);
+                void api.openSettings().then(() => emit("show_targets_tab", menuTarget.id));
+              }}
+            >
+              Rename…
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() =>
+                void open({ directory: true, multiple: false, title: "Project directory" }).then((dir) => {
+                  if (typeof dir === "string") void run(() => api.setProjectRoot(menuTarget.id, dir));
+                })
+              }
+            >
+              {menuTarget.project_root ? `Project: ${menuTarget.project_name ?? menuTarget.project_root}…` : "Set project directory…"}
+            </button>
+          </div>
+          {menuSuggestion ? (
+            <div className="row">
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => void run(() => api.confirmRebind(menuTarget.id, menuSuggestion.window.platform_window_id))}
+              >
+                Rebind to “{menuSuggestion.window.title || menuSuggestion.window.app_name}”
+              </button>
+            </div>
+          ) : null}
+          <div className="row">
+            <button
+              type="button"
+              className="danger"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setMenuId(null);
+                void run(() => api.unbindTarget(menuTarget.id));
+              }}
+            >
+              Remove this window
+            </button>
+          </div>
+        </div>
+      ) : expanded ? (
         <ResultPreview
           result={result}
           notice={snapshot.notice}
