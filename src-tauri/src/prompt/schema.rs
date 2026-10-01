@@ -55,35 +55,43 @@ pub struct PromptCompileInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct PromptCompileResult {
+    /// Optional: the model is no longer asked to write this (it only costs
+    /// output time). Empty means "keep the locally normalized transcript".
+    #[serde(default)]
     pub normalized_transcript: String,
+    /// Optional, for the same reason.
+    #[serde(default)]
     pub intent: String,
     pub prompt: String,
     pub uncertain_identifiers: Vec<String>,
     pub needs_confirmation: bool,
 }
 
-/// JSON Schema for the model output. `strict` adds
-/// `additionalProperties: false` for constrained decoding.
+/// JSON Schema for the model output.
+///
+/// The model writes only what is used: the prompt and the two confirmation
+/// fields. Output length is what makes the prompt step slow, so it is not
+/// asked to repeat the transcript or label an intent.
+///
+/// `strict` is the schema sent to the model for constrained decoding
+/// (`additionalProperties: false`). The non-strict form validates responses
+/// and still accepts `normalized_transcript` and `intent` when a model
+/// supplies them.
 pub fn output_schema(strict: bool) -> Value {
     let mut schema = json!({
         "type": "object",
         "properties": {
-            "normalized_transcript": { "type": "string" },
-            "intent": { "type": "string" },
             "prompt": { "type": "string", "minLength": 1 },
             "uncertain_identifiers": { "type": "array", "items": { "type": "string" } },
             "needs_confirmation": { "type": "boolean" }
         },
-        "required": [
-            "normalized_transcript",
-            "intent",
-            "prompt",
-            "uncertain_identifiers",
-            "needs_confirmation"
-        ]
+        "required": ["prompt", "uncertain_identifiers", "needs_confirmation"]
     });
     if strict {
         schema["additionalProperties"] = json!(false);
+    } else {
+        schema["properties"]["normalized_transcript"] = json!({ "type": "string" });
+        schema["properties"]["intent"] = json!({ "type": "string" });
     }
     schema
 }
@@ -222,6 +230,25 @@ mod tests {
                 "details must not echo model output"
             );
         }
+    }
+
+    #[test]
+    fn minimal_output_without_transcript_or_intent_is_accepted() {
+        let r = parse_model_output(
+            r#"{"prompt":"Fix the login timeout.","uncertain_identifiers":[],"needs_confirmation":false}"#,
+        )
+        .unwrap();
+        assert_eq!(r.prompt, "Fix the login timeout.");
+        assert!(r.normalized_transcript.is_empty() && r.intent.is_empty());
+        // The schema sent to the model asks for exactly these three fields.
+        let strict = output_schema(true);
+        assert_eq!(strict["properties"].as_object().unwrap().len(), 3);
+        assert_eq!(strict["additionalProperties"], false);
+        // A wrong type in an optional field is still rejected.
+        assert!(parse_model_output(
+            r#"{"prompt":"p","uncertain_identifiers":[],"needs_confirmation":false,"intent":5}"#
+        )
+        .is_err());
     }
 
     #[test]

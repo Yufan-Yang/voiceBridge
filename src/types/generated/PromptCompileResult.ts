@@ -4,4 +4,13 @@
  * Parsed model output. There is intentionally no `raw_transcript` field:
  * the prompt model cannot return or rewrite the ASR output.
  */
-export type PromptCompileResult = { normalized_transcript: string, intent: string, prompt: string, uncertain_identifiers: Array<string>, needs_confirmation: boolean, };
+export type PromptCompileResult = { 
+/**
+ * Optional: the model is no longer asked to write this (it only costs
+ * output time). Empty means "keep the locally normalized transcript".
+ */
+normalized_transcript: string, 
+/**
+ * Optional, for the same reason.
+ */
+intent: string, prompt: string, uncertain_identifiers: Array<string>, needs_confirmation: boolean, };

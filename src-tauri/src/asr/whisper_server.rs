@@ -65,6 +65,27 @@ pub fn wav_bytes(audio: &AudioBuffer) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Encoder context for a clip of `duration_ms`.
+///
+/// Whisper normally encodes a fixed 30 s window (1500 frames, 50 per second)
+/// no matter how short the clip is, which is most of the recognition time.
+/// Limiting the window to the clip length makes short utterances several
+/// times faster. Measured on large-v3-turbo: only multiples of 256 decode
+/// reliably (other sizes produced garbage), so the size is rounded up to one,
+/// with a margin of about 1.3 s. Returns 0 (the full window) for long clips.
+pub fn audio_ctx_for(duration_ms: u32) -> u32 {
+    const FRAMES_PER_SEC: u32 = 50;
+    const MARGIN: u32 = 64;
+    const STEP: u32 = 256;
+    let needed = duration_ms * FRAMES_PER_SEC / 1000 + MARGIN;
+    let rounded = needed.div_ceil(STEP) * STEP;
+    if rounded > 1280 {
+        0
+    } else {
+        rounded
+    }
+}
+
 impl WhisperServerProvider {
     pub fn new(
         sidecar: Arc<SidecarManager>,
@@ -177,6 +198,10 @@ impl WhisperServerProvider {
                     .clone()
                     .unwrap_or_else(|| "auto".to_string()),
             );
+        let audio_ctx = audio_ctx_for(audio.duration_ms());
+        if audio_ctx > 0 {
+            form = form.text("audio_ctx", audio_ctx.to_string());
+        }
         if !context.hotwords.is_empty() {
             // whisper.cpp biases decoding with an initial prompt.
             let prompt = context
@@ -283,6 +308,23 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["--host", "127.0.0.1"]));
         assert!(args.windows(2).any(|w| w == ["--request-path", "/secret"]));
         assert!(!args.iter().any(|a| a == "0.0.0.0"));
+    }
+
+    #[test]
+    fn audio_context_scales_with_clip_length_in_safe_steps() {
+        assert_eq!(audio_ctx_for(500), 256);
+        assert_eq!(audio_ctx_for(2_500), 256);
+        assert_eq!(audio_ctx_for(6_900), 512);
+        assert_eq!(audio_ctx_for(9_600), 768);
+        assert_eq!(audio_ctx_for(20_000), 1280);
+        assert_eq!(audio_ctx_for(25_000), 0, "long clips use the full window");
+        assert_eq!(audio_ctx_for(60_000), 0);
+        for ms in (0..30_000).step_by(137) {
+            let ctx = audio_ctx_for(ms);
+            assert!(ctx.is_multiple_of(256));
+            // The window always covers the whole clip.
+            assert!(ctx == 0 || ctx * 1000 / 50 >= ms);
+        }
     }
 
     #[test]

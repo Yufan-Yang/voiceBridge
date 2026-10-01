@@ -124,7 +124,11 @@ Nothing is downloaded by the app, and no download URL exists in the code. Choose
 
 VoiceBridge starts `llama-server` on `127.0.0.1` with a random free port and a random per-session API key (passed through the `LLAMA_API_KEY` environment variable), and requests schema-constrained JSON.
 
-### ASR: Fun-ASR (preferred)
+The prompt model is asked to write only the prompt and the two confirmation fields. It no longer repeats the transcript or labels an intent, because output length is what the prompt step's time depends on; on an M2 Pro a typical request now takes 0.6–1.8 s instead of 2–3.5 s. The normalized transcription therefore comes from the local rules.
+
+A smaller model is not a shortcut: `Qwen3-1.7B` (Q4_K_M) generated twice as fast per token but wrote far longer, rambling output, hit the token limit, translated Chinese requests into English and added requirements, ending up slower (3.6–4.7 s) and worse. `Qwen3-4B-Instruct-2507` stays the recommendation.
+
+### ASR: Fun-ASR
 
 - Runtime executable: a Python interpreter that has `funasr` installed.
 - Model path: a local model directory. Recommended: `FunAudioLLM/Fun-ASR-Nano-2512`.
@@ -137,6 +141,8 @@ VoiceBridge runs `sidecars/funasr_sidecar.py` and talks to it over stdin/stdout 
 - Model path: a ggml model file. Recommended: `large-v3-turbo`.
 
 With `whisper-server` the model stays loaded for as long as the app runs, so an utterance takes under a second on an M2 Pro and there is no reload between utterances. The server binds 127.0.0.1 on a random port; it has no API-key option, so the session token is used as a secret request-path prefix (other paths return 404). Audio is sent in memory, with no temporary file.
+
+For short clips the app limits Whisper's encoder window to the clip length (in steps of 256 frames, which is what decodes reliably on `large-v3-turbo`) instead of the fixed 30 s window. A 7 s clip takes about 0.4 s instead of 0.9 s; clips over about 24 s use the full window.
 
 With `whisper-cli` the program is started once per utterance and reads the audio from a temporary WAV (owner-only permissions, deleted when the request ends). This is slower, and after idle periods the first run can take about 20 s while macOS recompiles the GPU shaders.
 

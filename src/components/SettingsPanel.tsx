@@ -235,7 +235,7 @@ export function SettingsPanel() {
       const out = await act(() =>
         api.compilePrompt("rename the config loader function to load settings and update every caller"),
       );
-      if (out) setStatus(`Prompt model answered in ${Math.round(performance.now() - started)} ms (intent: ${out.intent}).`);
+      if (out) setStatus(`The prompt model is working (answered in ${Math.round(performance.now() - started)} ms).`);
     } else {
       refreshHealth();
     }
