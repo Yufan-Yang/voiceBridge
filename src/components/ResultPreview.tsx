@@ -1,5 +1,5 @@
 import type { AppError, OutputKind, UtteranceResult } from "../types";
-import { OUTPUT_LABELS, charCount, resultText } from "../services/format";
+import { OUTPUT_LABELS, charCount, resultText, timingDetail } from "../services/format";
 
 interface Props {
   result: UtteranceResult | null;
@@ -36,6 +36,8 @@ export function ResultPreview({ result, notice, error, busy, defaultKind, onCopy
         </div>
       ) : null}
 
+      {result ? <div className="timing">{timingDetail(result)}</div> : null}
+
       {result ? (
         KINDS.map((kind) => {
           const text = resultText(result, kind);
@@ -54,7 +56,9 @@ export function ResultPreview({ result, notice, error, busy, defaultKind, onCopy
                   Inject
                 </button>
               </header>
-              <pre className={text ? "" : "empty"}>{text || "—"}</pre>
+              <pre className={text ? "" : "empty"}>
+                {text || (kind === "prompt" ? "Not written (skipped for speed). Press “Recompile prompt” to create it." : "—")}
+              </pre>
             </section>
           );
         })

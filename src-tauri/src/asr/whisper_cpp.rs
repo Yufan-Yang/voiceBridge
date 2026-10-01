@@ -64,6 +64,19 @@ impl AsrProvider for WhisperCppProvider {
         })
     }
 
+    /// Runs one tiny transcription so the model file is in the page cache
+    /// and the GPU shaders are compiled before the user's first utterance
+    /// (otherwise the first one after an install can take ~20 s).
+    async fn start(&self) -> Result<()> {
+        let warm_up = AudioBuffer {
+            samples: vec![0.0; (crate::audio::ASR_SAMPLE_RATE / 2) as usize],
+            sample_rate: crate::audio::ASR_SAMPLE_RATE,
+        };
+        self.transcribe(warm_up, AsrContext::default(), CancellationToken::new())
+            .await
+            .map(|_| ())
+    }
+
     async fn transcribe(
         &self,
         audio: AudioBuffer,

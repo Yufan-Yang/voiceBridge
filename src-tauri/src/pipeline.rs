@@ -566,6 +566,7 @@ impl Pipeline {
             compiler.compile(input, token.clone()),
         )
         .await;
+        result.compile_ms = started.elapsed().as_millis() as u32;
         match compiled {
             Ok(c) => {
                 logging::event(
@@ -610,6 +611,7 @@ impl Pipeline {
         if settings.privacy.save_audio {
             self.save_audio_copy(id, &audio);
         }
+        let audio_ms = audio.duration_ms();
         let audio = audio::prepare_for_asr(audio, settings.audio.vad_enabled)?;
         let (frozen_target_id, target) = self.frozen_target(id);
         let terms = target
@@ -638,6 +640,7 @@ impl Pipeline {
             asr.transcribe(audio, context, token.clone()),
         )
         .await?;
+        let transcribe_ms = asr_started.elapsed().as_millis() as u32;
         logging::event(
             id,
             "transcribed",
@@ -658,6 +661,9 @@ impl Pipeline {
             uncertain_identifiers: Vec::new(),
             needs_confirmation: false,
             status: UtteranceStatus::Transcribed,
+            audio_ms,
+            transcribe_ms,
+            compile_ms: 0,
         };
         self.store_result(
             token,
@@ -678,9 +684,19 @@ impl Pipeline {
                 utterance_id: uid(),
             },
         )?;
-        let notice = self
-            .compile_into(&mut result, token, target.as_ref(), &terms, &settings)
-            .await?;
+        // The prompt model is the slowest stage. When the output that will be
+        // pasted is the raw or normalized transcription, it is skipped; the
+        // prompt can still be produced on demand with "Recompile prompt".
+        let output = target
+            .as_ref()
+            .map_or(settings.behavior.default_output, |t| t.preferred_output);
+        let notice = if output == OutputKind::Prompt {
+            self.compile_into(&mut result, token, target.as_ref(), &terms, &settings)
+                .await?
+        } else {
+            logging::event(id, "compile_skipped", "");
+            None
+        };
 
         // READY
         self.store_result(
@@ -694,10 +710,11 @@ impl Pipeline {
         self.history.upsert(&result, settings.behavior.save_history);
 
         // INJECTING — only automatic when the prompt compiled cleanly.
+        let prompt_usable =
+            result.status == UtteranceStatus::Compiled && !result.needs_confirmation;
         let auto = settings.behavior.auto_inject
-            && result.status == UtteranceStatus::Compiled
-            && !result.needs_confirmation
-            && target.is_some();
+            && target.is_some()
+            && (output != OutputKind::Prompt || prompt_usable);
         if auto {
             // Injection errors are reported by `inject_result` itself.
             let _ = self.inject_result(result, None, Some(token)).await;

@@ -328,3 +328,107 @@ async fn fun_asr_sidecar_transcribes_speech() {
         "sidecar log must not contain the transcript"
     );
 }
+
+#[tokio::test]
+#[ignore = "needs whisper-server and a ggml model"]
+async fn whisper_server_stays_loaded_and_transcribes_quickly() {
+    use voicebridge_lib::asr::whisper_server::WhisperServerProvider;
+    let (runtime, model, wav) =
+        require_env!("VB_WHISPER_SERVER", "VB_WHISPER_MODEL", "VB_SAMPLE_WAV");
+    let logs = tempfile::tempdir().unwrap();
+    let sidecar = Arc::new(SidecarManager::new(
+        "asr-live",
+        logs.path().to_path_buf(),
+        ErrorCode::AsrProcessFailed,
+    ));
+    let provider =
+        WhisperServerProvider::new(sidecar.clone(), runtime, model, Duration::from_secs(120));
+    let started = Instant::now();
+    provider.start().await.expect("start whisper-server");
+    eprintln!("whisper-server start + warm-up: {:?}", started.elapsed());
+    assert_eq!(
+        provider.health_check().await.unwrap().status,
+        ProviderStatus::Ready
+    );
+
+    let context = AsrContext {
+        utterance_id: "live-whisper-server".into(),
+        hotwords: hotwords(),
+        language: Some("en".into()),
+    };
+    for round in 0..3 {
+        let started = Instant::now();
+        let out = provider
+            .transcribe(
+                sample_audio(&wav),
+                context.clone(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("transcribe");
+        eprintln!(
+            "whisper-server round {round} ({:?}): {}",
+            started.elapsed(),
+            out.text
+        );
+        let lower = out.text.to_lowercase();
+        assert!(
+            lower.contains("user") && lower.contains("tests"),
+            "unexpected transcript: {}",
+            out.text
+        );
+    }
+
+    // Loopback only, and the inference endpoint is hidden behind the session token.
+    let pid = sidecar.pid().await.unwrap();
+    let listen = std::process::Command::new("/usr/sbin/lsof")
+        .args([
+            "-a",
+            "-p",
+            &pid.to_string(),
+            "-iTCP",
+            "-sTCP:LISTEN",
+            "-n",
+            "-P",
+        ])
+        .output()
+        .unwrap();
+    let listen = String::from_utf8_lossy(&listen.stdout).to_string();
+    assert!(
+        listen.contains("127.0.0.1:") && !listen.contains("*:"),
+        "listeners:\n{listen}"
+    );
+    let port: u16 = listen
+        .split("127.0.0.1:")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|p| p.parse().ok())
+        .expect("port");
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    for path in ["/inference", "/wrong-token/inference"] {
+        let form = reqwest::multipart::Form::new().text("response_format", "json");
+        let r = client
+            .post(format!("http://127.0.0.1:{port}{path}"))
+            .multipart(form)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 404, "{path} must not reach the model");
+    }
+
+    // Crash recovery.
+    std::process::Command::new("/bin/kill")
+        .args(["-9", &pid.to_string()])
+        .status()
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        provider.health_check().await.unwrap().status,
+        ProviderStatus::Unavailable
+    );
+    provider
+        .transcribe(sample_audio(&wav), context, CancellationToken::new())
+        .await
+        .expect("recovers after a crash");
+    sidecar.stop().await;
+}

@@ -86,8 +86,28 @@ export function charCount(text: string): number {
   return Array.from(text).length;
 }
 
+/** `6.9 s` — one decimal, or whole seconds from a minute up. */
+export function formatSeconds(ms: number): string {
+  const s = Math.max(0, ms) / 1000;
+  return s >= 60 ? `${Math.round(s)} s` : `${s.toFixed(1)} s`;
+}
+
+/** Time the models needed for this utterance (recognition + prompt). */
+export function processingMs(result: UtteranceResult): number {
+  return result.transcribe_ms + result.compile_ms;
+}
+
+/** `6.9 s spoken · 3.2 s to process` for the overlay bar. */
 export function resultSummary(result: UtteranceResult): string {
-  return `Raw ${charCount(result.raw_transcript)} chars · Prompt ${charCount(result.compiled_prompt)} chars`;
+  return `${formatSeconds(result.audio_ms)} spoken · ${formatSeconds(processingMs(result))} to process`;
+}
+
+/** Full breakdown for the expanded view. */
+export function timingDetail(result: UtteranceResult): string {
+  const parts = [`Audio ${formatSeconds(result.audio_ms)}`, `recognition ${formatSeconds(result.transcribe_ms)}`];
+  parts.push(result.compile_ms > 0 ? `prompt ${formatSeconds(result.compile_ms)}` : "prompt skipped");
+  parts.push(`total ${formatSeconds(processingMs(result))}`);
+  return parts.join(" · ");
 }
 
 export const OUTPUT_LABELS: Record<OutputKind, string> = {

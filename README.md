@@ -77,6 +77,10 @@ scripts/live-tests.sh all
 3. Hold `Ctrl+Option+Space`, speak, release.
 4. The overlay shows Listening → Transcribing → Compiling prompt → Ready, then pastes the compiled prompt into that window. Click ▾ to see the raw transcription, normalized transcription and compiled prompt, each with Copy and Inject.
 
+**What gets pasted.** Settings › "What to paste" chooses between the prompt written by the AI model, your words tidied up (*normalized*: spacing, capital letter, final full stop, project identifiers corrected), or exactly what the recognizer heard (*raw*). Raw and normalized skip the prompt model, so they are pasted as soon as recognition finishes; the prompt can still be produced afterwards with "Recompile prompt". For languages without spaces or capitals, such as Chinese, raw and normalized are usually identical.
+
+**Timing.** After each utterance the overlay shows how long you spoke and how long processing took; the expanded view breaks that into recognition and prompt time.
+
 **Where the words go.** The target is the window that has focus at the moment you press Push-to-Talk. It is fixed for that utterance: if you click into another window while the models are working, the text still goes back to the first one. The target only changes when you start speaking in a different window. Windows you have spoken into appear as chips in the overlay (up to nine; the least recently used is replaced), and each keeps its own project directory, output mode and Enter-after-paste setting.
 
 If VoiceBridge's own settings window is in front when you press the shortcut, the previous target is used.
@@ -127,43 +131,14 @@ VoiceBridge starts `llama-server` on `127.0.0.1` with a random free port and a r
 
 VoiceBridge runs `sidecars/funasr_sidecar.py` and talks to it over stdin/stdout (JSON lines); it opens no socket. Set `VOICEBRIDGE_ASR_DEVICE` (for example `mps`) to change the device; the default is `cpu`.
 
-### ASR: whisper.cpp (compatibility)
+### ASR: whisper.cpp
 
-- Runtime executable: `whisper-cli`.
+- Runtime executable: `whisper-server` (recommended) or `whisper-cli`.
 - Model path: a ggml model file. Recommended: `large-v3-turbo`.
 
-`whisper-cli` is run once per utterance. It only reads files, so the audio is written to a temporary WAV (owner-only permissions) that is deleted when the request ends; leftovers from a crash are removed at startup.
+With `whisper-server` the model stays loaded for as long as the app runs, so an utterance takes under a second on an M2 Pro and there is no reload between utterances. The server binds 127.0.0.1 on a random port; it has no API-key option, so the session token is used as a secret request-path prefix (other paths return 404). Audio is sent in memory, with no temporary file.
 
-### All-in-one build
-
-```sh
-scripts/build-all-in-one.sh
-```
-
-This produces a self-contained `VoiceBridge.app` (about 2.9 GB) with `llama-server`, `whisper-cli`, the Qwen3 GGUF and the whisper model inside `Contents/Resources/bundled`. Nothing else has to be installed or started: the app launches the bundled runtimes itself.
-
-- On first launch an all-in-one build selects whisper.cpp and llama.cpp automatically.
-- An empty path in Settings › Models means "use the bundled file"; set a path to use your own runtime or model instead.
-- Fun-ASR is not bundled (it needs a Python environment); it stays available by pointing the settings at an external interpreter and model.
-- The first utterance after installing is slow (about 20 s) while macOS compiles the GPU shaders; after that the sample takes about 2 s to transcribe and 3.5 s to compile.
-- A plain `pnpm tauri build` still produces the small app without models.
-
-To change the icon, edit `scripts/make_icon.swift`, then run `swift scripts/make_icon.swift src-tauri/app-icon.png && pnpm tauri icon src-tauri/app-icon.png -o src-tauri/icons`.
-
-### What is installed on this machine
-
-The sources for the all-in-one build live in `~/.local/share/voicebridge`. The app's settings now use the bundled whisper.cpp and llama.cpp; the earlier Fun-ASR configuration is saved next to the settings as `settings.external-models.backup.json`.
-
-| Piece | Path |
-| --- | --- |
-| `llama-server` (prebuilt release b11310) | `llama/llama-b11310/llama-server` |
-| `whisper-cli` (built from whisper.cpp v1.9.4) | `whisper.cpp-1.9.4/build/bin/whisper-cli` |
-| Python venv with `funasr` and `torch` | `venv/bin/python` |
-| Prompt model | `models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf` |
-| whisper model | `models/ggml-large-v3-turbo-q5_0.bin` |
-| Fun-ASR model | `models/Fun-ASR-Nano-2512/` |
-
-Measured on an M2 Pro: llama.cpp loads in about 12 s and compiles a prompt in about 3 s; whisper.cpp transcribes a 7 s clip in about 1.3 s once warm; Fun-ASR loads in about 21 s and transcribes the same clip in about 3 s on CPU. Configured runtimes are started in the background when the app launches, so the load time is not paid on the first utterance.
+With `whisper-cli` the program is started once per utterance and reads the audio from a temporary WAV (owner-only permissions, deleted when the request ends). This is slower, and after idle periods the first run can take about 20 s while macOS recompiles the GPU shaders.
 
 ### Mock providers
 

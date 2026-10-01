@@ -630,3 +630,8 @@ button.link {
   color: var(--muted);
   text-decoration: underline;
 }
+
+.timing {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

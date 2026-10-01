@@ -17,4 +17,16 @@ normalized_transcript: string,
 /**
  * Final prompt intended for a coding agent.
  */
-compiled_prompt: string, uncertain_identifiers: Array<string>, needs_confirmation: boolean, status: UtteranceStatus, };
+compiled_prompt: string, uncertain_identifiers: Array<string>, needs_confirmation: boolean, status: UtteranceStatus, 
+/**
+ * Length of the recording in milliseconds.
+ */
+audio_ms: number, 
+/**
+ * Time spent in speech recognition.
+ */
+transcribe_ms: number, 
+/**
+ * Time spent in the prompt model; 0 when that step was skipped.
+ */
+compile_ms: number, };

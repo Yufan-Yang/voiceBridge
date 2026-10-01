@@ -76,6 +76,15 @@ pub struct UtteranceResult {
     pub uncertain_identifiers: Vec<String>,
     pub needs_confirmation: bool,
     pub status: UtteranceStatus,
+    /// Length of the recording in milliseconds.
+    #[serde(default)]
+    pub audio_ms: u32,
+    /// Time spent in speech recognition.
+    #[serde(default)]
+    pub transcribe_ms: u32,
+    /// Time spent in the prompt model; 0 when that step was skipped.
+    #[serde(default)]
+    pub compile_ms: u32,
 }
 
 impl UtteranceResult {

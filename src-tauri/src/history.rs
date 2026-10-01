@@ -87,6 +87,9 @@ mod tests {
             uncertain_identifiers: vec![],
             needs_confirmation: false,
             status: UtteranceStatus::Compiled,
+            audio_ms: 0,
+            transcribe_ms: 0,
+            compile_ms: 0,
         }
     }
 

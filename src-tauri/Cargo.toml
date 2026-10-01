@@ -24,7 +24,7 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 cpal = "0.15"
 hound = "3"
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart"] }
 jsonschema = { version = "0.30", default-features = false }
 ts-rs = "10"
 

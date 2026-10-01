@@ -937,3 +937,54 @@ async fn follow_focus_can_be_turned_off() {
         "manual selection is used"
     );
 }
+
+// ------------------------------------------------------------- fast output
+
+#[tokio::test]
+async fn raw_or_normalized_output_skips_the_prompt_model() {
+    let h = harness();
+    h.registry
+        .set_output(&h.target_a.id, OutputKind::Normalized)
+        .unwrap();
+    h.asr.push("tidy the imports", None);
+    speak(&h).await;
+    assert_eq!(
+        h.compiler.calls.load(Ordering::SeqCst),
+        0,
+        "prompt model must not run"
+    );
+    assert_eq!(h.p.phase(), Phase::Done);
+    let r = h.p.last_result().unwrap();
+    assert_eq!(r.raw_transcript, "tidy the imports");
+    assert_eq!(r.compiled_prompt, "");
+    assert_eq!(h.injector.calls.lock().unwrap()[0].1, "Tidy the imports.");
+
+    // The prompt is still available on demand.
+    let r = h.p.recompile_last().await.unwrap();
+    assert_eq!(h.compiler.calls.load(Ordering::SeqCst), 1);
+    assert!(!r.compiled_prompt.is_empty());
+    assert_eq!(r.raw_transcript, "tidy the imports");
+}
+
+#[tokio::test]
+async fn result_records_audio_length_and_processing_times() {
+    let h = harness();
+    speak(&h).await;
+    let r = h.p.last_result().unwrap();
+    assert_eq!(
+        r.audio_ms, 800,
+        "length of the recording (the mock records 800 ms)"
+    );
+    // Stage times are measured, not invented: instant mocks finish in well under a second.
+    assert!(r.transcribe_ms < 1000 && r.compile_ms < 1000);
+
+    h.registry
+        .set_output(&h.target_a.id, OutputKind::Raw)
+        .unwrap();
+    speak(&h).await;
+    assert_eq!(
+        h.p.last_result().unwrap().compile_ms,
+        0,
+        "skipped prompt step takes no time"
+    );
+}

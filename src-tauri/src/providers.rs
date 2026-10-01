@@ -8,6 +8,7 @@ use std::time::Duration;
 use crate::asr::funasr::FunAsrProvider;
 use crate::asr::mock::MockAsr;
 use crate::asr::whisper_cpp::WhisperCppProvider;
+use crate::asr::whisper_server::{is_server_runtime, WhisperServerProvider};
 use crate::asr::AsrProvider;
 use crate::config::{AsrProviderKind, ModelSettings, PromptProviderKind};
 use crate::error::ErrorCode;
@@ -29,7 +30,8 @@ pub struct BundledAssets {
 }
 
 impl BundledAssets {
-    /// Looks for `llama/llama-server`, `whisper/whisper-cli`, the first
+    /// Looks for `llama/llama-server`, `whisper/whisper-server` (or
+    /// `whisper/whisper-cli`), the first
     /// `models/*.gguf` and the first `models/ggml-*.bin` under `dir`.
     pub fn discover(dir: &std::path::Path) -> Self {
         let file = |p: PathBuf| p.is_file().then_some(p);
@@ -48,7 +50,9 @@ impl BundledAssets {
         Self {
             llama_server: file(dir.join("llama").join("llama-server")),
             prompt_model: model(|n| n.ends_with(".gguf")),
-            whisper_cli: file(dir.join("whisper").join("whisper-cli")),
+            // The server flavour is preferred: it keeps the model loaded.
+            whisper_cli: file(dir.join("whisper").join("whisper-server"))
+                .or_else(|| file(dir.join("whisper").join("whisper-cli"))),
             whisper_model: model(|n| n.starts_with("ggml-") && n.ends_with(".bin")),
         }
     }
@@ -130,11 +134,25 @@ impl ProviderHub {
                 temp_dir: self.temp_dir.clone(),
                 timeout: Duration::from_millis(models.asr_timeout_ms as u64),
             }),
-            AsrProviderKind::WhisperCpp => Arc::new(WhisperCppProvider {
-                runtime: resolve(&models.asr_runtime_path, &self.bundled.whisper_cli),
-                model: resolve(&models.asr_model_path, &self.bundled.whisper_model),
-                temp_dir: self.temp_dir.clone(),
-            }),
+            AsrProviderKind::WhisperCpp => {
+                let runtime = resolve(&models.asr_runtime_path, &self.bundled.whisper_cli);
+                let model = resolve(&models.asr_model_path, &self.bundled.whisper_model);
+                if is_server_runtime(&runtime) {
+                    // Persistent server: the model stays loaded between utterances.
+                    Arc::new(WhisperServerProvider::new(
+                        self.asr_sidecar.clone(),
+                        runtime,
+                        model,
+                        Duration::from_millis(models.asr_timeout_ms as u64),
+                    ))
+                } else {
+                    Arc::new(WhisperCppProvider {
+                        runtime,
+                        model,
+                        temp_dir: self.temp_dir.clone(),
+                    })
+                }
+            }
         };
         let compiler: Arc<dyn PromptCompiler> = match models.prompt_provider {
             PromptProviderKind::Mock => Arc::new(MockPromptCompiler::default()),

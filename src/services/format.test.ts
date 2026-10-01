@@ -3,6 +3,8 @@ import type { Phase, UtteranceResult } from "../types";
 import {
   charCount,
   formatElapsed,
+  formatSeconds,
+  timingDetail,
   isBusy,
   isIndeterminate,
   phaseLabel,
@@ -38,6 +40,9 @@ const result: UtteranceResult = {
   uncertain_identifiers: [],
   needs_confirmation: false,
   status: "compiled",
+  audio_ms: 6900,
+  transcribe_ms: 900,
+  compile_ms: 2300,
 };
 
 describe("phase presentation", () => {
@@ -92,7 +97,12 @@ describe("formatting", () => {
   it("summarizes a result by character count", () => {
     expect(charCount("héllo")).toBe(5);
     expect(charCount("修复🙂")).toBe(3);
-    expect(resultSummary(result)).toBe("Raw 16 chars · Prompt 25 chars");
+    expect(resultSummary(result)).toBe("6.9 s spoken · 3.2 s to process");
+    expect(timingDetail(result)).toBe("Audio 6.9 s · recognition 0.9 s · prompt 2.3 s · total 3.2 s");
+    expect(timingDetail({ ...result, compile_ms: 0 })).toBe(
+      "Audio 6.9 s · recognition 0.9 s · prompt skipped · total 0.9 s",
+    );
+    expect(formatSeconds(75_400)).toBe("75 s");
   });
 
   it("returns each text variant independently", () => {

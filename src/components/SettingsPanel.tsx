@@ -51,6 +51,12 @@ const ASR_HELP: Record<AsrProviderKind, string> = {
   mock: "Does not listen at all: it returns a sample sentence so you can try the rest of the app.",
 };
 
+const OUTPUT_HELP: Record<OutputKind, string> = {
+  prompt: "Your words are rewritten into a clear, structured request. Adds a few seconds for the AI model.",
+  normalized: "Your own words with spacing, capital letter and final full stop fixed, and project names corrected. Pasted as soon as recognition finishes.",
+  raw: "The recognizer’s output with no changes at all. Pasted as soon as recognition finishes.",
+};
+
 const PROMPT_HELP: Record<PromptProviderKind, string> = {
   llama_cpp: "An AI model on this Mac turns what you said into a tidy, structured request for your coding assistant.",
   mock: "No AI model: only fixes punctuation and splits your sentence into a list.",
@@ -444,6 +450,16 @@ export function SettingsPanel() {
                 {LANGUAGES.some((l) => l.value === models.asr_language) ? null : (
                   <option value={models.asr_language}>{models.asr_language}</option>
                 )}
+              </select>
+            </Field>
+            <Field label="What to paste" hint={OUTPUT_HELP[behavior.default_output]}>
+              <select
+                value={behavior.default_output}
+                onChange={(e) => patch("behavior", { default_output: e.target.value as OutputKind })}
+              >
+                <option value="prompt">A prompt written by the AI model</option>
+                <option value="normalized">What I said, tidied up (faster)</option>
+                <option value="raw">Exactly what was heard (faster)</option>
               </select>
             </Field>
             <Field label="Hold to talk" hint="Hold these keys while you speak, then let go. Alt is the Option key.">

@@ -29,6 +29,9 @@ const utterance = (id: string, raw: string): UtteranceResult => ({
   uncertain_identifiers: [],
   needs_confirmation: false,
   status: "compiled",
+  audio_ms: 6900,
+  transcribe_ms: 900,
+  compile_ms: 2300,
 });
 
 const snapshot = (over: Partial<AppSnapshot>): AppSnapshot => ({ ...EMPTY_SNAPSHOT, ...over });

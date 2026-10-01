@@ -15,6 +15,8 @@ pub async fn get_settings(state: State<'_>) -> CmdResult<Settings> {
 #[tauri::command]
 pub async fn update_settings(state: State<'_>, settings: Settings) -> CmdResult<Settings> {
     let mut next = settings.sanitized();
+    let output_changed =
+        state.settings.read().unwrap().behavior.default_output != next.behavior.default_output;
     let (models_changed, shortcuts_changed, history_enabled, history_disabled) = {
         let current = state.settings.read().unwrap();
         // The overlay position is owned by the backend.
@@ -33,6 +35,15 @@ pub async fn update_settings(state: State<'_>, settings: Settings) -> CmdResult<
         state.hub.stop_all().await;
         state.pipeline.set_providers(state.hub.build(&next.models));
         state.warm_up_providers();
+    }
+    if output_changed {
+        // "What to paste" is one choice for the user: apply it to the windows
+        // already known, not only to ones seen from now on.
+        for target in state.registry.list() {
+            let _ = state
+                .registry
+                .set_output(&target.id, next.behavior.default_output);
+        }
     }
     if shortcuts_changed {
         state.apply_shortcuts();
